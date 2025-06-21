@@ -6,11 +6,16 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
+	"log"
 	"math"
 	"math/rand"
 	"os"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/oracle/oci-go-sdk/v65/common"
@@ -23,10 +28,1085 @@ import (
 	"github.com/oracle/oci-go-sdk/v65/objectstorage"
 )
 
+// LogLevel represents the logging verbosity level
+type LogLevel int
+
+const (
+	LogLevelSilent LogLevel = iota // Only errors
+	LogLevelNormal                 // Basic progress info (default)
+	LogLevelVerbose                // Detailed operational info
+	LogLevelDebug                  // Full diagnostic info
+)
+
+// String returns the string representation of the log level
+func (l LogLevel) String() string {
+	switch l {
+	case LogLevelSilent:
+		return "silent"
+	case LogLevelNormal:
+		return "normal"
+	case LogLevelVerbose:
+		return "verbose"
+	case LogLevelDebug:
+		return "debug"
+	default:
+		return "unknown"
+	}
+}
+
+// ParseLogLevel parses a string into a LogLevel
+func ParseLogLevel(s string) (LogLevel, error) {
+	switch strings.ToLower(s) {
+	case "silent":
+		return LogLevelSilent, nil
+	case "normal":
+		return LogLevelNormal, nil
+	case "verbose":
+		return LogLevelVerbose, nil
+	case "debug":
+		return LogLevelDebug, nil
+	default:
+		return LogLevelNormal, fmt.Errorf("invalid log level: %s (valid: silent, normal, verbose, debug)", s)
+	}
+}
+
+// Logger provides structured logging with multiple levels
+type Logger struct {
+	level    LogLevel
+	errorLog *log.Logger
+	infoLog  *log.Logger
+	debugLog *log.Logger
+	mu       sync.RWMutex
+}
+
+// NewLogger creates a new logger with the specified level
+func NewLogger(level LogLevel) *Logger {
+	logger := &Logger{
+		level: level,
+	}
+	
+	// Always create error logger (goes to stderr)
+	logger.errorLog = log.New(os.Stderr, "ERROR: ", log.LstdFlags)
+	
+	// Create info logger based on level (goes to stderr for progress info)
+	if level >= LogLevelNormal {
+		logger.infoLog = log.New(os.Stderr, "", log.LstdFlags)
+	} else {
+		logger.infoLog = log.New(io.Discard, "", 0)
+	}
+	
+	// Create debug logger based on level
+	if level >= LogLevelDebug {
+		logger.debugLog = log.New(os.Stderr, "DEBUG: ", log.LstdFlags|log.Lshortfile)
+	} else {
+		logger.debugLog = log.New(io.Discard, "", 0)
+	}
+	
+	return logger
+}
+
+// Error logs error messages (always visible except in silent mode)
+func (l *Logger) Error(format string, args ...interface{}) {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	l.errorLog.Printf(format, args...)
+}
+
+// Info logs informational messages (visible in normal, verbose, debug)
+func (l *Logger) Info(format string, args ...interface{}) {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	if l.level >= LogLevelNormal {
+		l.infoLog.Printf(format, args...)
+	}
+}
+
+// Verbose logs detailed operational messages (visible in verbose, debug)
+func (l *Logger) Verbose(format string, args ...interface{}) {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	if l.level >= LogLevelVerbose {
+		l.infoLog.Printf("VERBOSE: "+format, args...)
+	}
+}
+
+// Debug logs debug messages (visible only in debug mode)
+func (l *Logger) Debug(format string, args ...interface{}) {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	if l.level >= LogLevelDebug {
+		l.debugLog.Printf(format, args...)
+	}
+}
+
+// SetLevel updates the logging level dynamically
+func (l *Logger) SetLevel(level LogLevel) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.level = level
+	
+	// Recreate loggers based on new level
+	if level >= LogLevelNormal {
+		l.infoLog = log.New(os.Stderr, "", log.LstdFlags)
+	} else {
+		l.infoLog = log.New(io.Discard, "", 0)
+	}
+	
+	if level >= LogLevelDebug {
+		l.debugLog = log.New(os.Stderr, "DEBUG: ", log.LstdFlags|log.Lshortfile)
+	} else {
+		l.debugLog = log.New(io.Discard, "", 0)
+	}
+}
+
+// GetLevel returns the current log level
+func (l *Logger) GetLevel() LogLevel {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return l.level
+}
+
+// Statistics collection structures
+
+// StatisticsFormat represents the format for statistics output
+type StatisticsFormat string
+
+const (
+	StatsFormatText StatisticsFormat = "text"
+	StatsFormatJSON StatisticsFormat = "json"
+	StatsFormatCSV  StatisticsFormat = "csv"
+)
+
+// String returns the string representation of the statistics format
+func (sf StatisticsFormat) String() string {
+	return string(sf)
+}
+
+// ParseStatisticsFormat parses a string into a StatisticsFormat
+func ParseStatisticsFormat(s string) (StatisticsFormat, error) {
+	switch strings.ToLower(s) {
+	case "text":
+		return StatsFormatText, nil
+	case "json":
+		return StatsFormatJSON, nil
+	case "csv":
+		return StatsFormatCSV, nil
+	default:
+		return StatsFormatText, fmt.Errorf("invalid statistics format: %s (valid: text, json, csv)", s)
+	}
+}
+
+// ResourceTypeStats holds statistics for a specific resource type
+type ResourceTypeStats struct {
+	ResourceType    string        `json:"resource_type"`
+	DiscoveryCount  int64         `json:"discovery_count"`
+	ProcessingTime  time.Duration `json:"processing_time_ms"`
+	APICallCount    int64         `json:"api_call_count"`
+	ErrorCount      int64         `json:"error_count"`
+	RetryCount      int64         `json:"retry_count"`
+	AverageLatency  time.Duration `json:"average_latency_ms"`
+	PeakLatency     time.Duration `json:"peak_latency_ms"`
+	Throughput      float64       `json:"throughput_per_second"`
+}
+
+// CompartmentStats holds statistics for a specific compartment
+type CompartmentStats struct {
+	CompartmentID   string                        `json:"compartment_id"`
+	CompartmentName string                        `json:"compartment_name"`
+	ResourceCount   int64                         `json:"resource_count"`
+	ProcessingTime  time.Duration                 `json:"processing_time_ms"`
+	APICallCount    int64                         `json:"api_call_count"`
+	ErrorCount      int64                         `json:"error_count"`
+	RetryCount      int64                         `json:"retry_count"`
+	ResourceTypes   map[string]*ResourceTypeStats `json:"resource_types"`
+}
+
+// ExecutionSummary holds overall execution statistics
+type ExecutionSummary struct {
+	StartTime              time.Time         `json:"start_time"`
+	EndTime                time.Time         `json:"end_time"`
+	TotalExecutionTime     time.Duration     `json:"total_execution_time_ms"`
+	TotalResourcesFound    int64             `json:"total_resources_found"`
+	TotalAPICallsExecuted  int64             `json:"total_api_calls_executed"`
+	TotalErrorsEncountered int64             `json:"total_errors_encountered"`
+	TotalRetriesPerformed  int64             `json:"total_retries_performed"`
+	AverageThroughput      float64           `json:"average_throughput_per_second"`
+	PeakThroughput         float64           `json:"peak_throughput_per_second"`
+	CompartmentCount       int64             `json:"compartment_count"`
+	ResourceTypeCount      int64             `json:"resource_type_count"`
+	ConcurrencyLevel       int               `json:"concurrency_level"`
+	TimeoutConfiguration   time.Duration     `json:"timeout_configuration_ms"`
+}
+
+// PerformanceAnalysis holds performance analysis data
+type PerformanceAnalysis struct {
+	SlowestCompartment     *CompartmentStats  `json:"slowest_compartment"`
+	FastestCompartment     *CompartmentStats  `json:"fastest_compartment"`
+	MostResourcesFound     *CompartmentStats  `json:"most_resources_found"`
+	MostAPICallsExecuted   *CompartmentStats  `json:"most_api_calls_executed"`
+	SlowestResourceType    *ResourceTypeStats `json:"slowest_resource_type"`
+	FastestResourceType    *ResourceTypeStats `json:"fastest_resource_type"`
+	MostErrorProneType     *ResourceTypeStats `json:"most_error_prone_type"`
+	HighestRetryType       *ResourceTypeStats `json:"highest_retry_type"`
+	BottleneckAnalysis     []string           `json:"bottleneck_analysis"`
+	Recommendations        []string           `json:"recommendations"`
+}
+
+// ComprehensiveStatistics holds all collected statistics
+type ComprehensiveStatistics struct {
+	ExecutionSummary     ExecutionSummary                 `json:"execution_summary"`
+	CompartmentStats     map[string]*CompartmentStats     `json:"compartment_statistics"`
+	ResourceTypeStats    map[string]*ResourceTypeStats    `json:"resource_type_statistics"`
+	PerformanceAnalysis  PerformanceAnalysis              `json:"performance_analysis"`
+	GeneratedAt          time.Time                        `json:"generated_at"`
+	CliVersion           string                           `json:"cli_version"`
+	ConfigurationSummary map[string]interface{}           `json:"configuration_summary"`
+}
+
+// StatisticsCollector provides thread-safe statistics collection
+type StatisticsCollector struct {
+	mu                    sync.RWMutex
+	startTime            time.Time
+	compartmentStats     map[string]*CompartmentStats
+	resourceTypeStats    map[string]*ResourceTypeStats
+	globalAPICallCount   int64
+	globalErrorCount     int64
+	globalRetryCount     int64
+	globalResourceCount  int64
+	throughputSamples    []ThroughputSample
+	maxSamples           int
+	configuration        map[string]interface{}
+	resourceTypeOrder    []string
+	compartmentOrder     []string
+	enabled              bool
+}
+
+// ThroughputSample represents a throughput measurement at a specific time
+type ThroughputSample struct {
+	Timestamp  time.Time
+	Throughput float64
+}
+
+// StatisticsUpdate represents a statistics update from worker goroutines
+type StatisticsUpdate struct {
+	CompartmentID   string
+	CompartmentName string
+	ResourceType    string
+	ResourceCount   int64
+	ProcessingTime  time.Duration
+	APICallCount    int64
+	ErrorCount      int64
+	RetryCount      int64
+	Latency         time.Duration
+	OperationType   string // "start", "complete", "error", "retry"
+}
+
+// NewStatisticsCollector creates a new statistics collector
+func NewStatisticsCollector(enabled bool, config map[string]interface{}) *StatisticsCollector {
+	if !enabled {
+		return &StatisticsCollector{enabled: false}
+	}
+	
+	return &StatisticsCollector{
+		enabled:           true,
+		startTime:        time.Now(),
+		compartmentStats: make(map[string]*CompartmentStats),
+		resourceTypeStats: make(map[string]*ResourceTypeStats),
+		throughputSamples: make([]ThroughputSample, 0, 100),
+		maxSamples:       100,
+		configuration:    config,
+		resourceTypeOrder: []string{"compute_instance", "vcn", "subnet", "block_volume", "object_storage_bucket", "oke_cluster", "load_balancer", "database_system", "drg"},
+	}
+}
+
+// RecordStatistics records a statistics update
+func (sc *StatisticsCollector) RecordStatistics(update StatisticsUpdate) {
+	if !sc.enabled {
+		return
+	}
+	
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	
+	// Update global counters
+	atomic.AddInt64(&sc.globalAPICallCount, update.APICallCount)
+	atomic.AddInt64(&sc.globalErrorCount, update.ErrorCount)
+	atomic.AddInt64(&sc.globalRetryCount, update.RetryCount)
+	atomic.AddInt64(&sc.globalResourceCount, update.ResourceCount)
+	
+	// Update compartment statistics
+	compStats := sc.getOrCreateCompartmentStats(update.CompartmentID, update.CompartmentName)
+	compStats.ResourceCount += update.ResourceCount
+	compStats.ProcessingTime += update.ProcessingTime
+	compStats.APICallCount += update.APICallCount
+	compStats.ErrorCount += update.ErrorCount
+	compStats.RetryCount += update.RetryCount
+	
+	// Update resource type statistics
+	if update.ResourceType != "" {
+		rtStats := sc.getOrCreateResourceTypeStats(update.ResourceType)
+		rtStats.DiscoveryCount += update.ResourceCount
+		rtStats.ProcessingTime += update.ProcessingTime
+		rtStats.APICallCount += update.APICallCount
+		rtStats.ErrorCount += update.ErrorCount
+		rtStats.RetryCount += update.RetryCount
+		
+		// Update latency statistics
+		if update.Latency > 0 {
+			if rtStats.PeakLatency < update.Latency {
+				rtStats.PeakLatency = update.Latency
+			}
+			// Calculate rolling average latency
+			if rtStats.APICallCount > 0 {
+				rtStats.AverageLatency = time.Duration(int64(rtStats.AverageLatency)*rtStats.APICallCount + int64(update.Latency)) / time.Duration(rtStats.APICallCount+1)
+			}
+		}
+		
+		// Update compartment's resource type stats
+		if compStats.ResourceTypes == nil {
+			compStats.ResourceTypes = make(map[string]*ResourceTypeStats)
+		}
+		compRTStats := sc.getOrCreateCompartmentResourceTypeStats(compStats, update.ResourceType)
+		compRTStats.DiscoveryCount += update.ResourceCount
+		compRTStats.ProcessingTime += update.ProcessingTime
+		compRTStats.APICallCount += update.APICallCount
+		compRTStats.ErrorCount += update.ErrorCount
+		compRTStats.RetryCount += update.RetryCount
+	}
+	
+	// Record throughput sample
+	if update.ResourceCount > 0 && update.ProcessingTime > 0 {
+		throughput := float64(update.ResourceCount) / update.ProcessingTime.Seconds()
+		sc.recordThroughputSample(throughput)
+	}
+}
+
+// getOrCreateCompartmentStats gets or creates compartment statistics
+func (sc *StatisticsCollector) getOrCreateCompartmentStats(compartmentID, compartmentName string) *CompartmentStats {
+	if stats, exists := sc.compartmentStats[compartmentID]; exists {
+		return stats
+	}
+	
+	stats := &CompartmentStats{
+		CompartmentID:   compartmentID,
+		CompartmentName: compartmentName,
+		ResourceTypes:   make(map[string]*ResourceTypeStats),
+	}
+	sc.compartmentStats[compartmentID] = stats
+	sc.compartmentOrder = append(sc.compartmentOrder, compartmentID)
+	return stats
+}
+
+// getOrCreateResourceTypeStats gets or creates resource type statistics
+func (sc *StatisticsCollector) getOrCreateResourceTypeStats(resourceType string) *ResourceTypeStats {
+	if stats, exists := sc.resourceTypeStats[resourceType]; exists {
+		return stats
+	}
+	
+	stats := &ResourceTypeStats{
+		ResourceType: resourceType,
+	}
+	sc.resourceTypeStats[resourceType] = stats
+	return stats
+}
+
+// getOrCreateCompartmentResourceTypeStats gets or creates compartment-specific resource type statistics
+func (sc *StatisticsCollector) getOrCreateCompartmentResourceTypeStats(compStats *CompartmentStats, resourceType string) *ResourceTypeStats {
+	if stats, exists := compStats.ResourceTypes[resourceType]; exists {
+		return stats
+	}
+	
+	stats := &ResourceTypeStats{
+		ResourceType: resourceType,
+	}
+	compStats.ResourceTypes[resourceType] = stats
+	return stats
+}
+
+// recordThroughputSample records a throughput sample
+func (sc *StatisticsCollector) recordThroughputSample(throughput float64) {
+	sample := ThroughputSample{
+		Timestamp:  time.Now(),
+		Throughput: throughput,
+	}
+	
+	sc.throughputSamples = append(sc.throughputSamples, sample)
+	if len(sc.throughputSamples) > sc.maxSamples {
+		sc.throughputSamples = sc.throughputSamples[1:]
+	}
+}
+
+// GenerateComprehensiveStatistics generates comprehensive statistics report
+func (sc *StatisticsCollector) GenerateComprehensiveStatistics() *ComprehensiveStatistics {
+	if !sc.enabled {
+		return nil
+	}
+	
+	sc.mu.RLock()
+	defer sc.mu.RUnlock()
+	
+	endTime := time.Now()
+	totalExecutionTime := endTime.Sub(sc.startTime)
+	
+	// Calculate throughput statistics
+	averageThroughput := float64(0)
+	peakThroughput := float64(0)
+	if totalExecutionTime.Seconds() > 0 {
+		averageThroughput = float64(atomic.LoadInt64(&sc.globalResourceCount)) / totalExecutionTime.Seconds()
+	}
+	
+	for _, sample := range sc.throughputSamples {
+		if sample.Throughput > peakThroughput {
+			peakThroughput = sample.Throughput
+		}
+	}
+	
+	// Calculate final throughput for each resource type
+	for _, rtStats := range sc.resourceTypeStats {
+		if rtStats.ProcessingTime.Seconds() > 0 {
+			rtStats.Throughput = float64(rtStats.DiscoveryCount) / rtStats.ProcessingTime.Seconds()
+		}
+	}
+	
+	// Create execution summary
+	executionSummary := ExecutionSummary{
+		StartTime:              sc.startTime,
+		EndTime:                endTime,
+		TotalExecutionTime:     totalExecutionTime,
+		TotalResourcesFound:    atomic.LoadInt64(&sc.globalResourceCount),
+		TotalAPICallsExecuted:  atomic.LoadInt64(&sc.globalAPICallCount),
+		TotalErrorsEncountered: atomic.LoadInt64(&sc.globalErrorCount),
+		TotalRetriesPerformed:  atomic.LoadInt64(&sc.globalRetryCount),
+		AverageThroughput:      averageThroughput,
+		PeakThroughput:         peakThroughput,
+		CompartmentCount:       int64(len(sc.compartmentStats)),
+		ResourceTypeCount:      int64(len(sc.resourceTypeStats)),
+		ConcurrencyLevel:       5, // From maxWorkers
+	}
+	
+	if timeout, ok := sc.configuration["timeout"].(time.Duration); ok {
+		executionSummary.TimeoutConfiguration = timeout
+	}
+	
+	// Generate performance analysis
+	performanceAnalysis := sc.generatePerformanceAnalysis()
+	
+	return &ComprehensiveStatistics{
+		ExecutionSummary:     executionSummary,
+		CompartmentStats:     sc.compartmentStats,
+		ResourceTypeStats:    sc.resourceTypeStats,
+		PerformanceAnalysis:  performanceAnalysis,
+		GeneratedAt:          time.Now(),
+		CliVersion:           "1.0.0",
+		ConfigurationSummary: sc.configuration,
+	}
+}
+
+// generatePerformanceAnalysis generates performance analysis insights
+func (sc *StatisticsCollector) generatePerformanceAnalysis() PerformanceAnalysis {
+	analysis := PerformanceAnalysis{
+		BottleneckAnalysis: []string{},
+		Recommendations:    []string{},
+	}
+	
+	// Find slowest and fastest compartments
+	var slowestComp, fastestComp, mostResourcesComp, mostAPICallsComp *CompartmentStats
+	for _, compStats := range sc.compartmentStats {
+		if slowestComp == nil || compStats.ProcessingTime > slowestComp.ProcessingTime {
+			slowestComp = compStats
+		}
+		if fastestComp == nil || compStats.ProcessingTime < fastestComp.ProcessingTime {
+			fastestComp = compStats
+		}
+		if mostResourcesComp == nil || compStats.ResourceCount > mostResourcesComp.ResourceCount {
+			mostResourcesComp = compStats
+		}
+		if mostAPICallsComp == nil || compStats.APICallCount > mostAPICallsComp.APICallCount {
+			mostAPICallsComp = compStats
+		}
+	}
+	
+	analysis.SlowestCompartment = slowestComp
+	analysis.FastestCompartment = fastestComp
+	analysis.MostResourcesFound = mostResourcesComp
+	analysis.MostAPICallsExecuted = mostAPICallsComp
+	
+	// Find slowest and fastest resource types
+	var slowestRT, fastestRT, mostErrorRT, highestRetryRT *ResourceTypeStats
+	for _, rtStats := range sc.resourceTypeStats {
+		if slowestRT == nil || rtStats.ProcessingTime > slowestRT.ProcessingTime {
+			slowestRT = rtStats
+		}
+		if fastestRT == nil || rtStats.ProcessingTime < fastestRT.ProcessingTime {
+			fastestRT = rtStats
+		}
+		if mostErrorRT == nil || rtStats.ErrorCount > mostErrorRT.ErrorCount {
+			mostErrorRT = rtStats
+		}
+		if highestRetryRT == nil || rtStats.RetryCount > highestRetryRT.RetryCount {
+			highestRetryRT = rtStats
+		}
+	}
+	
+	analysis.SlowestResourceType = slowestRT
+	analysis.FastestResourceType = fastestRT
+	analysis.MostErrorProneType = mostErrorRT
+	analysis.HighestRetryType = highestRetryRT
+	
+	// Generate bottleneck analysis
+	if slowestRT != nil && slowestRT.ProcessingTime > 0 {
+		analysis.BottleneckAnalysis = append(analysis.BottleneckAnalysis,
+			fmt.Sprintf("Resource type '%s' is the slowest with %v processing time", slowestRT.ResourceType, slowestRT.ProcessingTime))
+	}
+	
+	if mostErrorRT != nil && mostErrorRT.ErrorCount > 0 {
+		analysis.BottleneckAnalysis = append(analysis.BottleneckAnalysis,
+			fmt.Sprintf("Resource type '%s' has the highest error rate with %d errors", mostErrorRT.ResourceType, mostErrorRT.ErrorCount))
+	}
+	
+	if highestRetryRT != nil && highestRetryRT.RetryCount > 0 {
+		analysis.BottleneckAnalysis = append(analysis.BottleneckAnalysis,
+			fmt.Sprintf("Resource type '%s' required the most retries with %d retries", highestRetryRT.ResourceType, highestRetryRT.RetryCount))
+	}
+	
+	// Generate recommendations
+	totalErrors := atomic.LoadInt64(&sc.globalErrorCount)
+	totalRetries := atomic.LoadInt64(&sc.globalRetryCount)
+	totalAPICalls := atomic.LoadInt64(&sc.globalAPICallCount)
+	
+	if totalErrors > 0 {
+		errorRate := float64(totalErrors) / float64(totalAPICalls) * 100
+		if errorRate > 5 {
+			analysis.Recommendations = append(analysis.Recommendations,
+				fmt.Sprintf("High error rate detected (%.2f%%). Consider reviewing API permissions and network connectivity", errorRate))
+		}
+	}
+	
+	if totalRetries > 0 {
+		retryRate := float64(totalRetries) / float64(totalAPICalls) * 100
+		if retryRate > 10 {
+			analysis.Recommendations = append(analysis.Recommendations,
+				fmt.Sprintf("High retry rate detected (%.2f%%). Consider increasing timeout values or reducing concurrency", retryRate))
+		}
+	}
+	
+	if len(sc.compartmentStats) > 10 {
+		analysis.Recommendations = append(analysis.Recommendations,
+			"Large number of compartments detected. Consider implementing compartment filtering for faster execution")
+	}
+	
+	return analysis
+}
+
+// ProgressTracker provides thread-safe progress tracking with ETA calculation
+type ProgressTracker struct {
+	mu                    sync.RWMutex
+	startTime            time.Time
+	lastUpdateTime       time.Time
+	totalCompartments    int64
+	processedCompartments int64
+	totalResourceTypes   int64
+	processedResourceTypes int64
+	totalResources       int64
+	errorCount          int64
+	retryCount          int64
+	currentOperation     string
+	currentCompartment   string
+	enabled             bool
+	speedSamples        []float64
+	maxSamples          int
+	refreshInterval     time.Duration
+	done                chan struct{}
+	updateChannel       chan ProgressUpdate
+}
+
+// ProgressUpdate represents a progress update from worker goroutines
+type ProgressUpdate struct {
+	CompartmentName string
+	Operation      string
+	ResourceCount  int64
+	IsCompartmentComplete bool
+	IsError        bool
+	IsRetry        bool
+}
+
 type Config struct {
-	OutputFormat string
-	Timeout      time.Duration
-	MaxWorkers   int
+	OutputFormat        string
+	Timeout             time.Duration
+	MaxWorkers          int
+	LogLevel            LogLevel
+	Logger              *Logger
+	ShowProgress        bool
+	ProgressTracker     *ProgressTracker
+	ShowStatistics      bool
+	StatisticsFormat    StatisticsFormat
+	StatisticsCollector *StatisticsCollector
+}
+
+// Global logger instance
+var logger *Logger
+
+// NewProgressTracker creates a new progress tracker
+func NewProgressTracker(enabled bool, totalCompartments, totalResourceTypes int64) *ProgressTracker {
+	if !enabled {
+		return &ProgressTracker{enabled: false}
+	}
+	
+	return &ProgressTracker{
+		startTime:            time.Now(),
+		lastUpdateTime:       time.Now(),
+		totalCompartments:    totalCompartments,
+		totalResourceTypes:   totalResourceTypes,
+		enabled:             true,
+		maxSamples:          20,
+		refreshInterval:     500 * time.Millisecond,
+		done:                make(chan struct{}),
+		updateChannel:       make(chan ProgressUpdate, 100),
+		speedSamples:        make([]float64, 0, 20),
+	}
+}
+
+// Start begins the progress tracking display
+func (pt *ProgressTracker) Start() {
+	if !pt.enabled {
+		return
+	}
+	
+	go pt.displayLoop()
+	go pt.updateLoop()
+}
+
+// Stop terminates the progress tracking
+func (pt *ProgressTracker) Stop() {
+	if !pt.enabled {
+		return
+	}
+	
+	close(pt.done)
+	// Clear the progress line
+	fmt.Fprint(os.Stderr, "\r\033[K")
+}
+
+// Update sends a progress update
+func (pt *ProgressTracker) Update(update ProgressUpdate) {
+	if !pt.enabled {
+		return
+	}
+	
+	select {
+	case pt.updateChannel <- update:
+	default:
+		// Channel full, skip this update
+	}
+}
+
+// updateLoop processes progress updates from worker goroutines
+func (pt *ProgressTracker) updateLoop() {
+	for {
+		select {
+		case <-pt.done:
+			return
+		case update := <-pt.updateChannel:
+			pt.processUpdate(update)
+		}
+	}
+}
+
+// processUpdate handles individual progress updates
+func (pt *ProgressTracker) processUpdate(update ProgressUpdate) {
+	pt.mu.Lock()
+	defer pt.mu.Unlock()
+	
+	if update.IsError {
+		atomic.AddInt64(&pt.errorCount, 1)
+	}
+	if update.IsRetry {
+		atomic.AddInt64(&pt.retryCount, 1)
+	}
+	if update.ResourceCount > 0 {
+		atomic.AddInt64(&pt.totalResources, update.ResourceCount)
+	}
+	if update.IsCompartmentComplete {
+		atomic.AddInt64(&pt.processedCompartments, 1)
+	}
+	if update.Operation != "" {
+		pt.currentOperation = update.Operation
+		pt.currentCompartment = update.CompartmentName
+		atomic.AddInt64(&pt.processedResourceTypes, 1)
+	}
+}
+
+// displayLoop handles the progress bar display
+func (pt *ProgressTracker) displayLoop() {
+	ticker := time.NewTicker(pt.refreshInterval)
+	defer ticker.Stop()
+	
+	for {
+		select {
+		case <-pt.done:
+			return
+		case <-ticker.C:
+			pt.updateDisplay()
+		}
+	}
+}
+
+// updateDisplay renders the progress bar
+func (pt *ProgressTracker) updateDisplay() {
+	pt.mu.RLock()
+	
+	elapsed := time.Since(pt.startTime)
+	totalOps := pt.totalCompartments * pt.totalResourceTypes
+	processedOps := atomic.LoadInt64(&pt.processedResourceTypes)
+	totalResources := atomic.LoadInt64(&pt.totalResources)
+	errors := atomic.LoadInt64(&pt.errorCount)
+	retries := atomic.LoadInt64(&pt.retryCount)
+	processedCompartments := atomic.LoadInt64(&pt.processedCompartments)
+	
+	currentOp := pt.currentOperation
+	currentComp := pt.currentCompartment
+	
+	pt.mu.RUnlock()
+	
+	// Calculate progress percentage
+	var progress float64
+	if totalOps > 0 {
+		progress = float64(processedOps) / float64(totalOps) * 100
+	}
+	
+	// Calculate speed and ETA
+	speed := pt.calculateSpeed(totalResources, elapsed)
+	eta := pt.calculateETA(progress, elapsed)
+	
+	// Create progress bar
+	barWidth := 30
+	filled := int(progress / 100 * float64(barWidth))
+	bar := strings.Repeat("█", filled) + strings.Repeat("░", barWidth-filled)
+	
+	// Format current operation
+	currentInfo := ""
+	if currentOp != "" && currentComp != "" {
+		currentInfo = fmt.Sprintf(" | %s in %s", currentOp, currentComp)
+		if len(currentInfo) > 50 {
+			currentInfo = currentInfo[:47] + "..."
+		}
+	}
+	
+	// Build progress line
+	progressLine := fmt.Sprintf(
+		"\r[%s] %5.1f%% | %5.1f res/s | ETA: %s | Elapsed: %s | Comp: %d/%d | Res: %d",
+		bar,
+		progress,
+		speed,
+		eta,
+		pt.formatDuration(elapsed),
+		processedCompartments,
+		pt.totalCompartments,
+		totalResources,
+	)
+	
+	if errors > 0 || retries > 0 {
+		progressLine += fmt.Sprintf(" | Err: %d | Retry: %d", errors, retries)
+	}
+	
+	progressLine += currentInfo
+	
+	// Ensure the line doesn't exceed terminal width (assume 120 chars)
+	if len(progressLine) > 120 {
+		progressLine = progressLine[:117] + "..."
+	}
+	
+	fmt.Fprint(os.Stderr, progressLine)
+}
+
+// calculateSpeed computes the current processing speed
+func (pt *ProgressTracker) calculateSpeed(totalResources int64, elapsed time.Duration) float64 {
+	if elapsed.Seconds() <= 0 {
+		return 0
+	}
+	
+	currentSpeed := float64(totalResources) / elapsed.Seconds()
+	
+	// Update speed samples for EMA calculation
+	pt.speedSamples = append(pt.speedSamples, currentSpeed)
+	if len(pt.speedSamples) > pt.maxSamples {
+		pt.speedSamples = pt.speedSamples[1:]
+	}
+	
+	// Calculate exponential moving average
+	if len(pt.speedSamples) == 0 {
+		return currentSpeed
+	}
+	
+	ema := pt.speedSamples[0]
+	alpha := 0.1
+	for i := 1; i < len(pt.speedSamples); i++ {
+		ema = alpha*pt.speedSamples[i] + (1-alpha)*ema
+	}
+	
+	return ema
+}
+
+// calculateETA estimates time to completion
+func (pt *ProgressTracker) calculateETA(progress float64, elapsed time.Duration) string {
+	if progress <= 0 || progress >= 100 {
+		return "00:00:00"
+	}
+	
+	// Estimate based on current progress rate
+	remainingPercent := 100 - progress
+	timePerPercent := elapsed.Seconds() / progress
+	etaSeconds := remainingPercent * timePerPercent
+	
+	if etaSeconds > 3600*24 { // More than 24 hours
+		return "24:00:00+"
+	}
+	
+	return pt.formatDuration(time.Duration(etaSeconds) * time.Second)
+}
+
+// formatDuration formats a duration as HH:MM:SS
+func (pt *ProgressTracker) formatDuration(d time.Duration) string {
+	hours := int(d.Hours())
+	minutes := int(d.Minutes()) % 60
+	seconds := int(d.Seconds()) % 60
+	return fmt.Sprintf("%02d:%02d:%02d", hours, minutes, seconds)
+}
+
+// Statistics output functions
+
+// OutputStatisticsText outputs statistics in human-readable text format
+func OutputStatisticsText(stats *ComprehensiveStatistics, writer io.Writer) error {
+	if stats == nil {
+		return fmt.Errorf("no statistics available")
+	}
+	
+	fmt.Fprintf(writer, "\n=== OCI Resource Discovery Statistics Report ===\n")
+	fmt.Fprintf(writer, "Generated at: %s\n", stats.GeneratedAt.Format(time.RFC3339))
+	fmt.Fprintf(writer, "CLI Version: %s\n\n", stats.CliVersion)
+	
+	// Execution Summary
+	fmt.Fprintf(writer, "--- Execution Summary ---\n")
+	fmt.Fprintf(writer, "Start Time: %s\n", stats.ExecutionSummary.StartTime.Format(time.RFC3339))
+	fmt.Fprintf(writer, "End Time: %s\n", stats.ExecutionSummary.EndTime.Format(time.RFC3339))
+	fmt.Fprintf(writer, "Total Execution Time: %v\n", stats.ExecutionSummary.TotalExecutionTime)
+	fmt.Fprintf(writer, "Total Resources Found: %d\n", stats.ExecutionSummary.TotalResourcesFound)
+	fmt.Fprintf(writer, "Total API Calls: %d\n", stats.ExecutionSummary.TotalAPICallsExecuted)
+	fmt.Fprintf(writer, "Total Errors: %d\n", stats.ExecutionSummary.TotalErrorsEncountered)
+	fmt.Fprintf(writer, "Total Retries: %d\n", stats.ExecutionSummary.TotalRetriesPerformed)
+	fmt.Fprintf(writer, "Average Throughput: %.2f resources/sec\n", stats.ExecutionSummary.AverageThroughput)
+	fmt.Fprintf(writer, "Peak Throughput: %.2f resources/sec\n", stats.ExecutionSummary.PeakThroughput)
+	fmt.Fprintf(writer, "Compartments Processed: %d\n", stats.ExecutionSummary.CompartmentCount)
+	fmt.Fprintf(writer, "Resource Types: %d\n", stats.ExecutionSummary.ResourceTypeCount)
+	fmt.Fprintf(writer, "Concurrency Level: %d\n", stats.ExecutionSummary.ConcurrencyLevel)
+	fmt.Fprintf(writer, "Timeout Configuration: %v\n\n", stats.ExecutionSummary.TimeoutConfiguration)
+	
+	// Resource Type Statistics
+	fmt.Fprintf(writer, "--- Resource Type Statistics ---\n")
+	fmt.Fprintf(writer, "%-25s | %8s | %12s | %10s | %8s | %8s | %12s\n",
+		"Resource Type", "Found", "Proc Time", "API Calls", "Errors", "Retries", "Throughput")
+	fmt.Fprintf(writer, "%s\n", strings.Repeat("-", 100))
+	
+	// Sort resource types by processing time (descending)
+	var sortedResourceTypes []*ResourceTypeStats
+	for _, rtStats := range stats.ResourceTypeStats {
+		sortedResourceTypes = append(sortedResourceTypes, rtStats)
+	}
+	sort.Slice(sortedResourceTypes, func(i, j int) bool {
+		return sortedResourceTypes[i].ProcessingTime > sortedResourceTypes[j].ProcessingTime
+	})
+	
+	for _, rtStats := range sortedResourceTypes {
+		fmt.Fprintf(writer, "%-25s | %8d | %12v | %10d | %8d | %8d | %9.2f/s\n",
+			rtStats.ResourceType,
+			rtStats.DiscoveryCount,
+			rtStats.ProcessingTime,
+			rtStats.APICallCount,
+			rtStats.ErrorCount,
+			rtStats.RetryCount,
+			rtStats.Throughput)
+	}
+	
+	// Compartment Statistics
+	fmt.Fprintf(writer, "\n--- Compartment Statistics ---\n")
+	fmt.Fprintf(writer, "%-30s | %8s | %12s | %10s | %8s | %8s\n",
+		"Compartment", "Resources", "Proc Time", "API Calls", "Errors", "Retries")
+	fmt.Fprintf(writer, "%s\n", strings.Repeat("-", 90))
+	
+	// Sort compartments by processing time (descending)
+	var sortedCompartments []*CompartmentStats
+	for _, compStats := range stats.CompartmentStats {
+		sortedCompartments = append(sortedCompartments, compStats)
+	}
+	sort.Slice(sortedCompartments, func(i, j int) bool {
+		return sortedCompartments[i].ProcessingTime > sortedCompartments[j].ProcessingTime
+	})
+	
+	for _, compStats := range sortedCompartments {
+		compartmentName := compStats.CompartmentName
+		if len(compartmentName) > 30 {
+			compartmentName = compartmentName[:27] + "..."
+		}
+		fmt.Fprintf(writer, "%-30s | %8d | %12v | %10d | %8d | %8d\n",
+			compartmentName,
+			compStats.ResourceCount,
+			compStats.ProcessingTime,
+			compStats.APICallCount,
+			compStats.ErrorCount,
+			compStats.RetryCount)
+	}
+	
+	// Performance Analysis
+	fmt.Fprintf(writer, "\n--- Performance Analysis ---\n")
+	analysis := stats.PerformanceAnalysis
+	
+	if analysis.SlowestCompartment != nil {
+		fmt.Fprintf(writer, "Slowest Compartment: %s (%v)\n",
+			analysis.SlowestCompartment.CompartmentName,
+			analysis.SlowestCompartment.ProcessingTime)
+	}
+	
+	if analysis.FastestCompartment != nil {
+		fmt.Fprintf(writer, "Fastest Compartment: %s (%v)\n",
+			analysis.FastestCompartment.CompartmentName,
+			analysis.FastestCompartment.ProcessingTime)
+	}
+	
+	if analysis.MostResourcesFound != nil {
+		fmt.Fprintf(writer, "Most Resources Found: %s (%d resources)\n",
+			analysis.MostResourcesFound.CompartmentName,
+			analysis.MostResourcesFound.ResourceCount)
+	}
+	
+	if analysis.SlowestResourceType != nil {
+		fmt.Fprintf(writer, "Slowest Resource Type: %s (%v)\n",
+			analysis.SlowestResourceType.ResourceType,
+			analysis.SlowestResourceType.ProcessingTime)
+	}
+	
+	if analysis.MostErrorProneType != nil && analysis.MostErrorProneType.ErrorCount > 0 {
+		fmt.Fprintf(writer, "Most Error-Prone Type: %s (%d errors)\n",
+			analysis.MostErrorProneType.ResourceType,
+			analysis.MostErrorProneType.ErrorCount)
+	}
+	
+	// Bottleneck Analysis
+	if len(analysis.BottleneckAnalysis) > 0 {
+		fmt.Fprintf(writer, "\nBottleneck Analysis:\n")
+		for i, bottleneck := range analysis.BottleneckAnalysis {
+			fmt.Fprintf(writer, "  %d. %s\n", i+1, bottleneck)
+		}
+	}
+	
+	// Recommendations
+	if len(analysis.Recommendations) > 0 {
+		fmt.Fprintf(writer, "\nRecommendations:\n")
+		for i, recommendation := range analysis.Recommendations {
+			fmt.Fprintf(writer, "  %d. %s\n", i+1, recommendation)
+		}
+	}
+	
+	fmt.Fprintf(writer, "\n=== End of Statistics Report ===\n")
+	return nil
+}
+
+// OutputStatisticsJSON outputs statistics in JSON format
+func OutputStatisticsJSON(stats *ComprehensiveStatistics, writer io.Writer) error {
+	if stats == nil {
+		return fmt.Errorf("no statistics available")
+	}
+	
+	encoder := json.NewEncoder(writer)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(stats)
+}
+
+// OutputStatisticsCSV outputs statistics in CSV format
+func OutputStatisticsCSV(stats *ComprehensiveStatistics, writer io.Writer) error {
+	if stats == nil {
+		return fmt.Errorf("no statistics available")
+	}
+	
+	csvWriter := csv.NewWriter(writer)
+	defer csvWriter.Flush()
+	
+	// Write execution summary
+	if err := csvWriter.Write([]string{"Section", "Metric", "Value"}); err != nil {
+		return err
+	}
+	
+	execSummary := stats.ExecutionSummary
+	records := [][]string{
+		{"Execution Summary", "Start Time", execSummary.StartTime.Format(time.RFC3339)},
+		{"Execution Summary", "End Time", execSummary.EndTime.Format(time.RFC3339)},
+		{"Execution Summary", "Total Execution Time (ms)", strconv.FormatInt(execSummary.TotalExecutionTime.Milliseconds(), 10)},
+		{"Execution Summary", "Total Resources Found", strconv.FormatInt(execSummary.TotalResourcesFound, 10)},
+		{"Execution Summary", "Total API Calls", strconv.FormatInt(execSummary.TotalAPICallsExecuted, 10)},
+		{"Execution Summary", "Total Errors", strconv.FormatInt(execSummary.TotalErrorsEncountered, 10)},
+		{"Execution Summary", "Total Retries", strconv.FormatInt(execSummary.TotalRetriesPerformed, 10)},
+		{"Execution Summary", "Average Throughput (resources/sec)", fmt.Sprintf("%.2f", execSummary.AverageThroughput)},
+		{"Execution Summary", "Peak Throughput (resources/sec)", fmt.Sprintf("%.2f", execSummary.PeakThroughput)},
+		{"Execution Summary", "Compartments Processed", strconv.FormatInt(execSummary.CompartmentCount, 10)},
+		{"Execution Summary", "Resource Types", strconv.FormatInt(execSummary.ResourceTypeCount, 10)},
+		{"Execution Summary", "Concurrency Level", strconv.Itoa(execSummary.ConcurrencyLevel)},
+	}
+	
+	for _, record := range records {
+		if err := csvWriter.Write(record); err != nil {
+			return err
+		}
+	}
+	
+	// Write resource type statistics
+	for _, rtStats := range stats.ResourceTypeStats {
+		records := [][]string{
+			{"Resource Type", rtStats.ResourceType + " - Discovery Count", strconv.FormatInt(rtStats.DiscoveryCount, 10)},
+			{"Resource Type", rtStats.ResourceType + " - Processing Time (ms)", strconv.FormatInt(rtStats.ProcessingTime.Milliseconds(), 10)},
+			{"Resource Type", rtStats.ResourceType + " - API Call Count", strconv.FormatInt(rtStats.APICallCount, 10)},
+			{"Resource Type", rtStats.ResourceType + " - Error Count", strconv.FormatInt(rtStats.ErrorCount, 10)},
+			{"Resource Type", rtStats.ResourceType + " - Retry Count", strconv.FormatInt(rtStats.RetryCount, 10)},
+			{"Resource Type", rtStats.ResourceType + " - Throughput (resources/sec)", fmt.Sprintf("%.2f", rtStats.Throughput)},
+		}
+		
+		for _, record := range records {
+			if err := csvWriter.Write(record); err != nil {
+				return err
+			}
+		}
+	}
+	
+	// Write compartment statistics
+	for _, compStats := range stats.CompartmentStats {
+		records := [][]string{
+			{"Compartment", compStats.CompartmentName + " - Resource Count", strconv.FormatInt(compStats.ResourceCount, 10)},
+			{"Compartment", compStats.CompartmentName + " - Processing Time (ms)", strconv.FormatInt(compStats.ProcessingTime.Milliseconds(), 10)},
+			{"Compartment", compStats.CompartmentName + " - API Call Count", strconv.FormatInt(compStats.APICallCount, 10)},
+			{"Compartment", compStats.CompartmentName + " - Error Count", strconv.FormatInt(compStats.ErrorCount, 10)},
+			{"Compartment", compStats.CompartmentName + " - Retry Count", strconv.FormatInt(compStats.RetryCount, 10)},
+		}
+		
+		for _, record := range records {
+			if err := csvWriter.Write(record); err != nil {
+				return err
+			}
+		}
+	}
+	
+	return nil
+}
+
+// OutputStatistics outputs statistics in the specified format
+func OutputStatistics(stats *ComprehensiveStatistics, format StatisticsFormat, writer io.Writer) error {
+	switch format {
+	case StatsFormatText:
+		return OutputStatisticsText(stats, writer)
+	case StatsFormatJSON:
+		return OutputStatisticsJSON(stats, writer)
+	case StatsFormatCSV:
+		return OutputStatisticsCSV(stats, writer)
+	default:
+		return fmt.Errorf("unsupported statistics format: %s", format)
+	}
 }
 
 type OCIClients struct {
@@ -153,19 +1233,45 @@ func getCompartments(ctx context.Context, clients *OCIClients) ([]identity.Compa
 }
 
 func discoverComputeInstances(ctx context.Context, clients *OCIClients, compartmentID string) ([]ResourceInfo, error) {
+	return discoverComputeInstancesWithStats(ctx, clients, compartmentID, "", nil)
+}
+
+func discoverComputeInstancesWithStats(ctx context.Context, clients *OCIClients, compartmentID, compartmentName string, statsCollector *StatisticsCollector) ([]ResourceInfo, error) {
 	var resources []ResourceInfo
 	var allInstances []core.Instance
+	startTime := time.Now()
+	apiCallCount := int64(0)
 
+	logger.Debug("Starting compute instances discovery for compartment: %s", compartmentID)
+	
 	// Implement pagination to get all instances
 	var page *string
+	pageCount := 0
 	for {
+		pageCount++
+		logger.Debug("Fetching compute instances page %d for compartment: %s", pageCount, compartmentID)
 		req := core.ListInstancesRequest{
 			CompartmentId: common.String(compartmentID),
 			Page:         page,
 		}
 
+		apiStartTime := time.Now()
 		resp, err := clients.ComputeClient.ListInstances(ctx, req)
+		apiCallCount++
+		apiLatency := time.Since(apiStartTime)
+		
 		if err != nil {
+			if statsCollector != nil {
+				statsCollector.RecordStatistics(StatisticsUpdate{
+					CompartmentID:   compartmentID,
+					CompartmentName: compartmentName,
+					ResourceType:    "compute_instance",
+					APICallCount:    1,
+					ErrorCount:      1,
+					Latency:         apiLatency,
+					OperationType:   "error",
+				})
+			}
 			return nil, err
 		}
 
@@ -228,12 +1334,34 @@ func discoverComputeInstances(ctx context.Context, clients *OCIClients, compartm
 		}
 	}
 
+	processingTime := time.Since(startTime)
+	
+	// Record statistics
+	if statsCollector != nil {
+		statsCollector.RecordStatistics(StatisticsUpdate{
+			CompartmentID:   compartmentID,
+			CompartmentName: compartmentName,
+			ResourceType:    "compute_instance",
+			ResourceCount:   int64(len(resources)),
+			ProcessingTime:  processingTime,
+			APICallCount:    apiCallCount,
+			OperationType:   "complete",
+		})
+	}
+	
+	logger.Debug("Completed compute instances discovery for compartment %s: found %d instances across %d pages", compartmentID, len(resources), pageCount)
 	return resources, nil
 }
 
 func discoverVCNs(ctx context.Context, clients *OCIClients, compartmentID string) ([]ResourceInfo, error) {
+	return discoverVCNsWithStats(ctx, clients, compartmentID, "", nil)
+}
+
+func discoverVCNsWithStats(ctx context.Context, clients *OCIClients, compartmentID, compartmentName string, statsCollector *StatisticsCollector) ([]ResourceInfo, error) {
 	var resources []ResourceInfo
 	var allVcns []core.Vcn
+	startTime := time.Now()
+	apiCallCount := int64(0)
 
 	// Implement pagination to get all VCNs
 	var page *string
@@ -243,8 +1371,23 @@ func discoverVCNs(ctx context.Context, clients *OCIClients, compartmentID string
 			Page:         page,
 		}
 
+		apiStartTime := time.Now()
 		resp, err := clients.VirtualNetworkClient.ListVcns(ctx, req)
+		apiCallCount++
+		apiLatency := time.Since(apiStartTime)
+		
 		if err != nil {
+			if statsCollector != nil {
+				statsCollector.RecordStatistics(StatisticsUpdate{
+					CompartmentID:   compartmentID,
+					CompartmentName: compartmentName,
+					ResourceType:    "vcn",
+					APICallCount:    1,
+					ErrorCount:      1,
+					Latency:         apiLatency,
+					OperationType:   "error",
+				})
+			}
 			return nil, err
 		}
 
@@ -287,6 +1430,21 @@ func discoverVCNs(ctx context.Context, clients *OCIClients, compartmentID string
 				AdditionalInfo: additionalInfo,
 			})
 		}
+	}
+
+	processingTime := time.Since(startTime)
+	
+	// Record statistics
+	if statsCollector != nil {
+		statsCollector.RecordStatistics(StatisticsUpdate{
+			CompartmentID:   compartmentID,
+			CompartmentName: compartmentName,
+			ResourceType:    "vcn",
+			ResourceCount:   int64(len(resources)),
+			ProcessingTime:  processingTime,
+			APICallCount:    apiCallCount,
+			OperationType:   "complete",
+		})
 	}
 
 	return resources, nil
@@ -719,7 +1877,7 @@ func isTransientError(err error) bool {
 		   strings.Contains(errStr, "504")
 }
 
-func withRetry(ctx context.Context, operation func() error, maxRetries int, operationName string) error {
+func withRetryAndProgress(ctx context.Context, operation func() error, maxRetries int, operationName string, progressTracker *ProgressTracker) error {
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		err := operation()
 		if err == nil {
@@ -735,6 +1893,11 @@ func withRetry(ctx context.Context, operation func() error, maxRetries int, oper
 			return fmt.Errorf("operation '%s' failed after %d attempts: %w", operationName, maxRetries+1, err)
 		}
 		
+		// Increment retry counter
+		if progressTracker != nil {
+			progressTracker.Update(ProgressUpdate{IsRetry: true})
+		}
+		
 		// Exponential backoff with jitter (up to 30 seconds max)
 		backoff := time.Duration(math.Min(math.Pow(2, float64(attempt)), 30)) * time.Second
 		jitter := time.Duration(float64(backoff) * 0.1 * (2*rand.Float64() - 1))
@@ -743,7 +1906,7 @@ func withRetry(ctx context.Context, operation func() error, maxRetries int, oper
 			sleepTime = backoff
 		}
 		
-		fmt.Fprintf(os.Stderr, "  Retrying %s in %v (attempt %d/%d): %v\n", operationName, sleepTime, attempt+1, maxRetries+1, err)
+		logger.Verbose("Retrying %s in %v (attempt %d/%d): %v", operationName, sleepTime, attempt+1, maxRetries+1, err)
 		
 		select {
 		case <-ctx.Done():
@@ -754,17 +1917,42 @@ func withRetry(ctx context.Context, operation func() error, maxRetries int, oper
 	return nil
 }
 
-func discoverAllResources(ctx context.Context, clients *OCIClients) ([]ResourceInfo, error) {
+// Keep the old function for backward compatibility
+func withRetry(ctx context.Context, operation func() error, maxRetries int, operationName string) error {
+	return withRetryAndProgress(ctx, operation, maxRetries, operationName, nil)
+}
+
+func discoverAllResourcesWithProgress(ctx context.Context, clients *OCIClients, progressTracker *ProgressTracker) ([]ResourceInfo, error) {
+	return discoverAllResourcesWithProgressAndStats(ctx, clients, progressTracker, nil)
+}
+
+func discoverAllResourcesWithProgressAndStats(ctx context.Context, clients *OCIClients, progressTracker *ProgressTracker, statsCollector *StatisticsCollector) ([]ResourceInfo, error) {
 	var allResources []ResourceInfo
 	var resourcesMutex sync.Mutex
 
+	// Start progress tracking
+	if progressTracker != nil {
+		progressTracker.Start()
+		defer progressTracker.Stop()
+	}
+
 	// Get all compartments
-	fmt.Fprintf(os.Stderr, "Getting compartments...\n")
+	if progressTracker != nil {
+		progressTracker.Update(ProgressUpdate{
+			Operation: "Discovering compartments",
+		})
+	}
+	logger.Info("Getting compartments...")
+	logger.Debug("Starting compartment discovery with context timeout: %v", ctx)
 	compartments, err := getCompartments(ctx, clients)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get compartments: %w", err)
 	}
-	fmt.Fprintf(os.Stderr, "Found %d compartments\n", len(compartments))
+	logger.Info("Found %d compartments", len(compartments))
+	logger.Verbose("Compartment discovery completed successfully")
+	
+	// Set progress tracker totals (disabled)
+	// // progressTracker.SetTotalCompartments(len(compartments))
 
 	// Create a worker pool for parallel compartment processing
 	maxWorkers := 5  // Reasonable limit to avoid API rate limiting
@@ -787,96 +1975,215 @@ func discoverAllResources(ctx context.Context, clients *OCIClients) ([]ResourceI
 				compartmentName = *comp.Name
 			}
 			
-			fmt.Fprintf(os.Stderr, "Processing compartment %d/%d: %s\n", idx+1, len(compartments), compartmentName)
+			logger.Info("Processing compartment %d/%d: %s", idx+1, len(compartments), compartmentName)
+			logger.Debug("Processing compartment with ID: %s", compartmentID)
+			
+			// Update progress tracker with current compartment
+			if progressTracker != nil {
+				progressTracker.Update(ProgressUpdate{
+					CompartmentName: compartmentName,
+					Operation:      "Processing compartment",
+				})
+			}
 
 			var compartmentResources []ResourceInfo
 			
 			// Discover compute instances with retry
-			fmt.Fprintf(os.Stderr, "  Discovering compute instances...\n")
+			// Progress update for compute instances discovery
+			if progressTracker != nil {
+				progressTracker.Update(ProgressUpdate{
+					CompartmentName: compartmentName,
+					Operation:      "Discovering compute instances",
+				})
+			}
+			logger.Verbose("  Discovering compute instances in compartment: %s", compartmentName)
+			logger.Debug("  Starting compute instance discovery with retry mechanism")
 			var instances []ResourceInfo
-			err := withRetry(ctx, func() error {
+			err := withRetryAndProgress(ctx, func() error {
 				var retryErr error
-				instances, retryErr = discoverComputeInstances(ctx, clients, compartmentID)
+				instances, retryErr = discoverComputeInstancesWithStats(ctx, clients, compartmentID, compartmentName, statsCollector)
 				return retryErr
-			}, 3, "compute instances discovery")
+			}, 3, "compute instances discovery", progressTracker)
 			
 			if err == nil {
 				compartmentResources = append(compartmentResources, instances...)
-				fmt.Fprintf(os.Stderr, "  Found %d compute instances\n", len(instances))
+				if progressTracker != nil {
+					progressTracker.Update(ProgressUpdate{
+						CompartmentName: compartmentName,
+						Operation:      "Compute instances discovered",
+						ResourceCount:  int64(len(instances)),
+					})
+				}
+				logger.Info("  Found %d compute instances", len(instances))
+				logger.Debug("  Compute instances discovery completed successfully")
 			} else if !isRetriableError(err) {
-				fmt.Fprintf(os.Stderr, "  Warning: Failed to discover compute instances: %v\n", err)
+				if progressTracker != nil {
+					progressTracker.Update(ProgressUpdate{IsError: true})
+				}
+				logger.Error("Failed to discover compute instances in compartment %s: %v", compartmentName, err)
+			} else {
+				logger.Verbose("Skipping compute instances in compartment %s due to retriable error: %v", compartmentName, err)
 			}
 
 			// Discover VCNs
-			fmt.Fprintf(os.Stderr, "  Discovering VCNs...\n")
+			if progressTracker != nil {
+				progressTracker.Update(ProgressUpdate{
+					CompartmentName: compartmentName,
+					Operation:      "Discovering VCNs",
+				})
+			}
+			logger.Verbose("  Discovering VCNs in compartment: %s", compartmentName)
 			if vcns, err := discoverVCNs(ctx, clients, compartmentID); err == nil {
 				compartmentResources = append(compartmentResources, vcns...)
-				fmt.Fprintf(os.Stderr, "  Found %d VCNs\n", len(vcns))
+				if progressTracker != nil {
+					progressTracker.Update(ProgressUpdate{
+						CompartmentName: compartmentName,
+						Operation:      "VCNs discovered",
+						ResourceCount:  int64(len(vcns)),
+					})
+				}
+				logger.Info("  Found %d VCNs", len(vcns))
+				logger.Debug("  VCNs discovery completed successfully")
 			} else if !isRetriableError(err) {
-				fmt.Fprintf(os.Stderr, "  Warning: Failed to discover VCNs: %v\n", err)
+				if progressTracker != nil {
+					progressTracker.Update(ProgressUpdate{IsError: true})
+				}
+				logger.Error("Failed to discover VCNs in compartment %s: %v", compartmentName, err)
+			} else {
+				logger.Verbose("Skipping VCNs in compartment %s due to retriable error: %v", compartmentName, err)
 			}
 
 			// Discover subnets
-			fmt.Fprintf(os.Stderr, "  Discovering subnets...\n")
+			if progressTracker != nil {
+				progressTracker.Update(ProgressUpdate{
+					CompartmentName: compartmentName,
+					Operation:      "Discovering subnets",
+				})
+			}
+			logger.Verbose("  Discovering subnets in compartment: %s", compartmentName)
 			if subnets, err := discoverSubnets(ctx, clients, compartmentID); err == nil {
 				compartmentResources = append(compartmentResources, subnets...)
-				fmt.Fprintf(os.Stderr, "  Found %d subnets\n", len(subnets))
+				if progressTracker != nil {
+					progressTracker.Update(ProgressUpdate{
+						CompartmentName: compartmentName,
+						Operation:      "Subnets discovered",
+						ResourceCount:  int64(len(subnets)),
+					})
+				}
+				logger.Info("  Found %d subnets", len(subnets))
+				logger.Debug("  Subnets discovery completed successfully")
 			} else if !isRetriableError(err) {
-				fmt.Fprintf(os.Stderr, "  Warning: Failed to discover subnets: %v\n", err)
+				if progressTracker != nil {
+					progressTracker.Update(ProgressUpdate{IsError: true})
+				}
+				logger.Error("Failed to discover subnets in compartment %s: %v", compartmentName, err)
+			} else {
+				logger.Verbose("Skipping subnets in compartment %s due to retriable error: %v", compartmentName, err)
 			}
 
 			// Discover block volumes
-			fmt.Fprintf(os.Stderr, "  Discovering block volumes...\n")
+			// progressTracker.SetCurrentOperation("Discovering block volumes", compartmentName)
+			logger.Verbose("  Discovering block volumes in compartment: %s", compartmentName)
 			if volumes, err := discoverBlockVolumes(ctx, clients, compartmentID); err == nil {
 				compartmentResources = append(compartmentResources, volumes...)
-				fmt.Fprintf(os.Stderr, "  Found %d block volumes\n", len(volumes))
+				// progressTracker.AddDiscoveredResources("block_volume", len(volumes))
+				logger.Info("  Found %d block volumes", len(volumes))
+				logger.Debug("  Block volumes discovery completed successfully")
 			} else if !isRetriableError(err) {
-				fmt.Fprintf(os.Stderr, "  Warning: Failed to discover block volumes: %v\n", err)
+				// progressTracker.IncrementError()
+				logger.Error("Failed to discover block volumes in compartment %s: %v", compartmentName, err)
+			} else {
+				logger.Verbose("Skipping block volumes in compartment %s due to retriable error: %v", compartmentName, err)
 			}
+			// progressTracker.IncrementResourceType()
 
 			// Discover Object Storage buckets
-			fmt.Fprintf(os.Stderr, "  Discovering Object Storage buckets...\n")
+			// progressTracker.SetCurrentOperation("Discovering Object Storage buckets", compartmentName)
+			logger.Verbose("  Discovering Object Storage buckets in compartment: %s", compartmentName)
 			if buckets, err := discoverObjectStorageBuckets(ctx, clients, compartmentID); err == nil {
 				compartmentResources = append(compartmentResources, buckets...)
-				fmt.Fprintf(os.Stderr, "  Found %d Object Storage buckets\n", len(buckets))
+				// progressTracker.AddDiscoveredResources("object_storage_bucket", len(buckets))
+				logger.Info("  Found %d Object Storage buckets", len(buckets))
+				logger.Debug("  Object Storage buckets discovery completed successfully")
 			} else if !isRetriableError(err) {
-				fmt.Fprintf(os.Stderr, "  Warning: Failed to discover Object Storage buckets: %v\n", err)
+				// progressTracker.IncrementError()
+				logger.Error("Failed to discover Object Storage buckets in compartment %s: %v", compartmentName, err)
+			} else {
+				logger.Verbose("Skipping Object Storage buckets in compartment %s due to retriable error: %v", compartmentName, err)
 			}
+			// progressTracker.IncrementResourceType()
 
 			// Discover OKE clusters
-			fmt.Fprintf(os.Stderr, "  Discovering OKE clusters...\n")
+			// progressTracker.SetCurrentOperation("Discovering OKE clusters", compartmentName)
+			logger.Verbose("  Discovering OKE clusters in compartment: %s", compartmentName)
 			if clusters, err := discoverOKEClusters(ctx, clients, compartmentID); err == nil {
 				compartmentResources = append(compartmentResources, clusters...)
-				fmt.Fprintf(os.Stderr, "  Found %d OKE clusters\n", len(clusters))
+				// progressTracker.AddDiscoveredResources("oke_cluster", len(clusters))
+				logger.Info("  Found %d OKE clusters", len(clusters))
+				logger.Debug("  OKE clusters discovery completed successfully")
 			} else if !isRetriableError(err) {
-				fmt.Fprintf(os.Stderr, "  Warning: Failed to discover OKE clusters: %v\n", err)
+				// progressTracker.IncrementError()
+				logger.Error("Failed to discover OKE clusters in compartment %s: %v", compartmentName, err)
+			} else {
+				logger.Verbose("Skipping OKE clusters in compartment %s due to retriable error: %v", compartmentName, err)
 			}
+			// progressTracker.IncrementResourceType()
 
 			// Discover Load Balancers
-			fmt.Fprintf(os.Stderr, "  Discovering Load Balancers...\n")
+			// progressTracker.SetCurrentOperation("Discovering Load Balancers", compartmentName)
+			logger.Verbose("  Discovering Load Balancers in compartment: %s", compartmentName)
 			if lbs, err := discoverLoadBalancers(ctx, clients, compartmentID); err == nil {
 				compartmentResources = append(compartmentResources, lbs...)
-				fmt.Fprintf(os.Stderr, "  Found %d Load Balancers\n", len(lbs))
+				// progressTracker.AddDiscoveredResources("load_balancer", len(lbs))
+				logger.Info("  Found %d Load Balancers", len(lbs))
+				logger.Debug("  Load Balancers discovery completed successfully")
 			} else if !isRetriableError(err) {
-				fmt.Fprintf(os.Stderr, "  Warning: Failed to discover Load Balancers: %v\n", err)
+				// progressTracker.IncrementError()
+				logger.Error("Failed to discover Load Balancers in compartment %s: %v", compartmentName, err)
+			} else {
+				logger.Verbose("Skipping Load Balancers in compartment %s due to retriable error: %v", compartmentName, err)
 			}
+			// progressTracker.IncrementResourceType()
 
 			// Discover Database Systems
-			fmt.Fprintf(os.Stderr, "  Discovering Database Systems...\n")
+			// progressTracker.SetCurrentOperation("Discovering Database Systems", compartmentName)
+			logger.Verbose("  Discovering Database Systems in compartment: %s", compartmentName)
 			if dbs, err := discoverDatabases(ctx, clients, compartmentID); err == nil {
 				compartmentResources = append(compartmentResources, dbs...)
-				fmt.Fprintf(os.Stderr, "  Found %d Database Systems\n", len(dbs))
+				// progressTracker.AddDiscoveredResources("database_system", len(dbs))
+				logger.Info("  Found %d Database Systems", len(dbs))
+				logger.Debug("  Database Systems discovery completed successfully")
 			} else if !isRetriableError(err) {
-				fmt.Fprintf(os.Stderr, "  Warning: Failed to discover Database Systems: %v\n", err)
+				// progressTracker.IncrementError()
+				logger.Error("Failed to discover Database Systems in compartment %s: %v", compartmentName, err)
+			} else {
+				logger.Verbose("Skipping Database Systems in compartment %s due to retriable error: %v", compartmentName, err)
 			}
+			// progressTracker.IncrementResourceType()
 
 			// Discover DRGs
-			fmt.Fprintf(os.Stderr, "  Discovering DRGs...\n")
+			// progressTracker.SetCurrentOperation("Discovering DRGs", compartmentName)
+			logger.Verbose("  Discovering DRGs in compartment: %s", compartmentName)
 			if drgs, err := discoverDRGs(ctx, clients, compartmentID); err == nil {
 				compartmentResources = append(compartmentResources, drgs...)
-				fmt.Fprintf(os.Stderr, "  Found %d DRGs\n", len(drgs))
+				// progressTracker.AddDiscoveredResources("drg", len(drgs))
+				logger.Info("  Found %d DRGs", len(drgs))
+				logger.Debug("  DRGs discovery completed successfully")
 			} else if !isRetriableError(err) {
-				fmt.Fprintf(os.Stderr, "  Warning: Failed to discover DRGs: %v\n", err)
+				// progressTracker.IncrementError()
+				logger.Error("Failed to discover DRGs in compartment %s: %v", compartmentName, err)
+			} else {
+				logger.Verbose("Skipping DRGs in compartment %s due to retriable error: %v", compartmentName, err)
+			}
+			// progressTracker.IncrementResourceType()
+			
+			// Mark compartment as completed
+			if progressTracker != nil {
+				progressTracker.Update(ProgressUpdate{
+					CompartmentName: compartmentName,
+					Operation:      "Compartment completed",
+					IsCompartmentComplete: true,
+				})
 			}
 			
 			// Thread-safe append to allResources
@@ -889,7 +2196,9 @@ func discoverAllResources(ctx context.Context, clients *OCIClients) ([]ResourceI
 	// Wait for all goroutines to complete
 	wg.Wait()
 
-	fmt.Fprintf(os.Stderr, "Discovery completed. Total resources found: %d\n", len(allResources))
+	logger.Info("Discovery completed. Total resources found: %d", len(allResources))
+	logger.Verbose("Resource discovery operation completed successfully")
+	logger.Debug("Final resource count breakdown: %d total resources across %d compartments", len(allResources), len(compartments))
 	return allResources, nil
 }
 
@@ -962,15 +2271,67 @@ func outputResources(resources []ResourceInfo, format string) error {
 func main() {
 	config := &Config{}
 	var timeoutMinutes int
+	var logLevelStr string
+	var showProgress bool
+	var noProgress bool
+	var showStats bool
+	var statsFormatStr string
 	
 	flag.StringVar(&config.OutputFormat, "format", "json", "Output format: csv, tsv, or json")
 	flag.StringVar(&config.OutputFormat, "f", "json", "Output format: csv, tsv, or json (shorthand)")
 	flag.IntVar(&timeoutMinutes, "timeout", 30, "Timeout in minutes for the entire operation")
 	flag.IntVar(&timeoutMinutes, "t", 30, "Timeout in minutes for the entire operation (shorthand)")
+	flag.StringVar(&logLevelStr, "log-level", "normal", "Log level: silent, normal, verbose, debug")
+	flag.StringVar(&logLevelStr, "l", "normal", "Log level: silent, normal, verbose, debug (shorthand)")
+	flag.BoolVar(&showProgress, "progress", false, "Show progress bar with real-time statistics")
+	flag.BoolVar(&noProgress, "no-progress", false, "Disable progress bar (default behavior)")
+	flag.BoolVar(&showStats, "stats", false, "Show comprehensive statistics report after execution")
+	flag.BoolVar(&showStats, "s", false, "Show comprehensive statistics report after execution (shorthand)")
+	flag.StringVar(&statsFormatStr, "stats-format", "text", "Statistics output format: text, json, csv")
 	flag.Parse()
 
 	// Set timeout duration
 	config.Timeout = time.Duration(timeoutMinutes) * time.Minute
+	
+	// Parse and validate log level
+	logLevel, err := ParseLogLevel(logLevelStr)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		flag.Usage()
+		os.Exit(1)
+	}
+	config.LogLevel = logLevel
+	
+	// Parse and validate statistics format
+	statsFormat, err := ParseStatisticsFormat(statsFormatStr)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		flag.Usage()
+		os.Exit(1)
+	}
+	config.StatisticsFormat = statsFormat
+	config.ShowStatistics = showStats
+	
+	// Configure progress bar - default to enabled unless explicitly disabled or silent mode
+	config.ShowProgress = showProgress || (!noProgress && logLevel != LogLevelSilent)
+	
+	// Initialize global logger
+	logger = NewLogger(logLevel)
+	config.Logger = logger
+	
+	// Initialize progress tracker
+	config.ProgressTracker = NewProgressTracker(config.ShowProgress, 0, 0)
+	
+	// Initialize statistics collector
+	configMap := map[string]interface{}{
+		"output_format": config.OutputFormat,
+		"timeout":       config.Timeout,
+		"log_level":     config.LogLevel.String(),
+		"show_progress": config.ShowProgress,
+		"show_stats":    config.ShowStatistics,
+		"stats_format":  config.StatisticsFormat.String(),
+	}
+	config.StatisticsCollector = NewStatisticsCollector(config.ShowStatistics, configMap)
 
 	// Validate output format
 	validFormats := []string{"csv", "tsv", "json"}
@@ -991,27 +2352,47 @@ func main() {
 	}
 
 	// Initialize OCI clients
+	logger.Debug("Initializing OCI clients with instance principal authentication")
 	clients, err := initOCIClients()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error initializing OCI clients: %v\n", err)
+		logger.Error("Error initializing OCI clients: %v", err)
 		os.Exit(1)
 	}
+	logger.Verbose("OCI clients initialized successfully")
 
 	// Create context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), config.Timeout)
 	defer cancel()
 
 	// Discover all resources
-	fmt.Fprintf(os.Stderr, "Starting resource discovery with %v timeout...\n", config.Timeout)
-	resources, err := discoverAllResources(ctx, clients)
+	logger.Info("Starting resource discovery with %v timeout...", config.Timeout)
+	logger.Debug("Discovery configuration - Format: %s, Timeout: %v, LogLevel: %s, Progress: %v, Stats: %v", config.OutputFormat, config.Timeout, config.LogLevel, config.ShowProgress, config.ShowStatistics)
+	resources, err := discoverAllResourcesWithProgressAndStats(ctx, clients, config.ProgressTracker, config.StatisticsCollector)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error discovering resources: %v\n", err)
+		logger.Error("Error discovering resources: %v", err)
 		os.Exit(1)
 	}
 
 	// Output resources in the specified format
+	logger.Debug("Outputting %d resources in %s format", len(resources), config.OutputFormat)
 	if err := outputResources(resources, config.OutputFormat); err != nil {
-		fmt.Fprintf(os.Stderr, "Error outputting resources: %v\n", err)
+		logger.Error("Error outputting resources: %v", err)
 		os.Exit(1)
+	}
+	logger.Verbose("Resource output completed successfully")
+	
+	// Output statistics if requested
+	if config.ShowStatistics && config.StatisticsCollector != nil {
+		stats := config.StatisticsCollector.GenerateComprehensiveStatistics()
+		if stats != nil {
+			logger.Info("Generating comprehensive statistics report...")
+			if err := OutputStatistics(stats, config.StatisticsFormat, os.Stderr); err != nil {
+				logger.Error("Error outputting statistics: %v", err)
+				os.Exit(1)
+			}
+			logger.Verbose("Statistics report completed successfully")
+		} else {
+			logger.Verbose("No statistics available to report")
+		}
 	}
 }
