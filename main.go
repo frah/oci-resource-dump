@@ -20,12 +20,17 @@ import (
 
 	"github.com/oracle/oci-go-sdk/v65/common"
 	"github.com/oracle/oci-go-sdk/v65/common/auth"
+	"github.com/oracle/oci-go-sdk/v65/apigateway"
 	"github.com/oracle/oci-go-sdk/v65/containerengine"
 	"github.com/oracle/oci-go-sdk/v65/core"
 	"github.com/oracle/oci-go-sdk/v65/database"
+	"github.com/oracle/oci-go-sdk/v65/functions"
 	"github.com/oracle/oci-go-sdk/v65/identity"
 	"github.com/oracle/oci-go-sdk/v65/loadbalancer"
 	"github.com/oracle/oci-go-sdk/v65/objectstorage"
+	"github.com/oracle/oci-go-sdk/v65/filestorage"
+	"github.com/oracle/oci-go-sdk/v65/networkloadbalancer"
+	"github.com/oracle/oci-go-sdk/v65/streaming"
 )
 
 // LogLevel represents the logging verbosity level
@@ -172,7 +177,7 @@ func (l *Logger) GetLevel() LogLevel {
 
 
 
-// getOrCreateCompartmentStats gets or creates compartment statistics
+type Config struct {
 func (sc *StatisticsCollector) getOrCreateCompartmentStats(compartmentID, compartmentName string) *CompartmentStats {
 	if stats, exists := sc.compartmentStats[compartmentID]; exists {
 		return stats
@@ -228,7 +233,7 @@ func (sc *StatisticsCollector) recordThroughputSample(throughput float64) {
 }
 
 // GenerateComprehensiveStatistics generates comprehensive statistics report
-func (sc *StatisticsCollector) GenerateComprehensiveStatistics() *ComprehensiveStatistics {
+func (sc *StatisticsCollector) GenerateComprehensiveStatistics() *StatisticsReport {
 	if !sc.enabled {
 		return nil
 	}
@@ -261,43 +266,33 @@ func (sc *StatisticsCollector) GenerateComprehensiveStatistics() *ComprehensiveS
 	
 	// Create execution summary
 	executionSummary := ExecutionSummary{
-		StartTime:              sc.startTime,
-		EndTime:                endTime,
-		TotalExecutionTime:     totalExecutionTime,
-		TotalResourcesFound:    atomic.LoadInt64(&sc.globalResourceCount),
-		TotalAPICallsExecuted:  atomic.LoadInt64(&sc.globalAPICallCount),
-		TotalErrorsEncountered: atomic.LoadInt64(&sc.globalErrorCount),
-		TotalRetriesPerformed:  atomic.LoadInt64(&sc.globalRetryCount),
-		AverageThroughput:      averageThroughput,
-		PeakThroughput:         peakThroughput,
-		CompartmentCount:       int64(len(sc.compartmentStats)),
-		ResourceTypeCount:      int64(len(sc.resourceTypeStats)),
-		ConcurrencyLevel:       5, // From maxWorkers
-	}
-	
-	if timeout, ok := sc.configuration["timeout"].(time.Duration); ok {
-		executionSummary.TimeoutConfiguration = timeout
+		StartTime:             sc.startTime,
+		EndTime:               endTime,
+		TotalDuration:         totalExecutionTime,
+		TotalResources:        atomic.LoadInt64(&sc.globalResourceCount),
+		TotalAPICallss:        atomic.LoadInt64(&sc.globalAPICallCount),
+		TotalErrors:           atomic.LoadInt64(&sc.globalErrorCount),
+		TotalRetries:          atomic.LoadInt64(&sc.globalRetryCount),
+		OverallThroughput:     averageThroughput,
+		AvgAPILatency:         0, // Will calculate if needed
 	}
 	
 	// Generate performance analysis
 	performanceAnalysis := sc.generatePerformanceAnalysis()
 	
-	return &ComprehensiveStatistics{
+	return &StatisticsReport{
 		ExecutionSummary:     executionSummary,
 		CompartmentStats:     sc.compartmentStats,
 		ResourceTypeStats:    sc.resourceTypeStats,
 		PerformanceAnalysis:  performanceAnalysis,
-		GeneratedAt:          time.Now(),
-		CliVersion:           "1.0.0",
-		ConfigurationSummary: sc.configuration,
 	}
 }
 
 // generatePerformanceAnalysis generates performance analysis insights
 func (sc *StatisticsCollector) generatePerformanceAnalysis() PerformanceAnalysis {
 	analysis := PerformanceAnalysis{
-		BottleneckAnalysis: []string{},
 		Recommendations:    []string{},
+		Bottlenecks:        []string{},
 	}
 	
 	// Find slowest and fastest compartments
@@ -317,13 +312,8 @@ func (sc *StatisticsCollector) generatePerformanceAnalysis() PerformanceAnalysis
 		}
 	}
 	
-	analysis.SlowestCompartment = slowestComp
-	analysis.FastestCompartment = fastestComp
-	analysis.MostResourcesFound = mostResourcesComp
-	analysis.MostAPICallsExecuted = mostAPICallsComp
-	
 	// Find slowest and fastest resource types
-	var slowestRT, fastestRT, mostErrorRT, highestRetryRT *ResourceTypeStats
+	var slowestRT, fastestRT, mostErrorRT *ResourceTypeStats
 	for _, rtStats := range sc.resourceTypeStats {
 		if slowestRT == nil || rtStats.ProcessingTime > slowestRT.ProcessingTime {
 			slowestRT = rtStats
@@ -331,33 +321,34 @@ func (sc *StatisticsCollector) generatePerformanceAnalysis() PerformanceAnalysis
 		if fastestRT == nil || rtStats.ProcessingTime < fastestRT.ProcessingTime {
 			fastestRT = rtStats
 		}
-		if mostErrorRT == nil || rtStats.ErrorCount > mostErrorRT.ErrorCount {
+		if mostErrorRT == nil || rtStats.Errors > mostErrorRT.Errors {
 			mostErrorRT = rtStats
-		}
-		if highestRetryRT == nil || rtStats.RetryCount > highestRetryRT.RetryCount {
-			highestRetryRT = rtStats
 		}
 	}
 	
-	analysis.SlowestResourceType = slowestRT
-	analysis.FastestResourceType = fastestRT
-	analysis.MostErrorProneType = mostErrorRT
-	analysis.HighestRetryType = highestRetryRT
+	// Set analysis fields based on found data
+	if slowestRT != nil {
+		analysis.SlowestResourceType = slowestRT.ResourceType
+	}
+	if fastestRT != nil {
+		analysis.FastestResourceType = fastestRT.ResourceType
+	}
+	if mostErrorRT != nil {
+		analysis.HighestErrorRate = mostErrorRT.ResourceType
+	}
+	if mostResourcesComp != nil {
+		analysis.MostProductiveComp = mostResourcesComp.CompartmentName
+	}
 	
 	// Generate bottleneck analysis
 	if slowestRT != nil && slowestRT.ProcessingTime > 0 {
-		analysis.BottleneckAnalysis = append(analysis.BottleneckAnalysis,
+		analysis.Bottlenecks = append(analysis.Bottlenecks,
 			fmt.Sprintf("Resource type '%s' is the slowest with %v processing time", slowestRT.ResourceType, slowestRT.ProcessingTime))
 	}
 	
-	if mostErrorRT != nil && mostErrorRT.ErrorCount > 0 {
-		analysis.BottleneckAnalysis = append(analysis.BottleneckAnalysis,
-			fmt.Sprintf("Resource type '%s' has the highest error rate with %d errors", mostErrorRT.ResourceType, mostErrorRT.ErrorCount))
-	}
-	
-	if highestRetryRT != nil && highestRetryRT.RetryCount > 0 {
-		analysis.BottleneckAnalysis = append(analysis.BottleneckAnalysis,
-			fmt.Sprintf("Resource type '%s' required the most retries with %d retries", highestRetryRT.ResourceType, highestRetryRT.RetryCount))
+	if mostErrorRT != nil && mostErrorRT.Errors > 0 {
+		analysis.Bottlenecks = append(analysis.Bottlenecks,
+			fmt.Sprintf("Resource type '%s' has the highest error rate with %d errors", mostErrorRT.ResourceType, mostErrorRT.Errors))
 	}
 	
 	// Generate recommendations
@@ -421,118 +412,6 @@ type ProgressUpdate struct {
 	IsRetry        bool
 }
 
-// StatisticsCollector provides thread-safe statistics collection for performance analysis
-type StatisticsCollector struct {
-	mu                     sync.RWMutex
-	enabled               bool
-	startTime             time.Time
-	endTime               time.Time
-	totalAPICall          int64
-	totalErrors           int64
-	totalRetries          int64
-	totalResources        int64
-	resourceTypeStats     map[string]*ResourceTypeStats
-	compartmentStats      map[string]*CompartmentStats
-	throughputSamples     []ThroughputSample
-	maxSamples           int
-}
-
-// ResourceTypeStats tracks statistics for each resource type
-type ResourceTypeStats struct {
-	Count           int64
-	TotalTime       time.Duration
-	MinTime         time.Duration
-	MaxTime         time.Duration
-	Errors          int64
-	APICallsCount   int64
-	FirstSeen       time.Time
-	LastSeen        time.Time
-}
-
-// CompartmentStats tracks statistics for each compartment
-type CompartmentStats struct {
-	Name            string
-	ResourceCount   int64
-	ProcessingTime  time.Duration
-	Errors          int64
-	StartTime       time.Time
-	EndTime         time.Time
-}
-
-// ThroughputSample represents a throughput measurement at a specific time
-type ThroughputSample struct {
-	Timestamp  time.Time
-	Resources  int64
-	APICallss  int64
-}
-
-// StatisticsReport represents the final statistics report structure
-type StatisticsReport struct {
-	ExecutionSummary    ExecutionSummary                `json:"execution_summary"`
-	ResourceTypeStats  map[string]ResourceTypeStats    `json:"resource_type_stats"`
-	CompartmentStats   map[string]CompartmentStats     `json:"compartment_stats"`
-	PerformanceAnalysis PerformanceAnalysis            `json:"performance_analysis"`
-}
-
-// ExecutionSummary provides high-level execution statistics
-type ExecutionSummary struct {
-	StartTime           time.Time     `json:"start_time"`
-	EndTime             time.Time     `json:"end_time"`
-	TotalDuration       time.Duration `json:"total_duration"`
-	TotalResources      int64         `json:"total_resources"`
-	TotalAPICallss      int64         `json:"total_api_calls"`
-	TotalErrors         int64         `json:"total_errors"`
-	TotalRetries        int64         `json:"total_retries"`
-	OverallThroughput   float64       `json:"overall_throughput"`  // resources/second
-	AvgAPILatency       time.Duration `json:"avg_api_latency"`
-}
-
-// PerformanceAnalysis provides automated performance insights
-type PerformanceAnalysis struct {
-	SlowestResourceType string        `json:"slowest_resource_type"`
-	FastestResourceType string        `json:"fastest_resource_type"`
-	HighestErrorRate    string        `json:"highest_error_rate"`
-	MostProductiveComp  string        `json:"most_productive_compartment"`
-	Recommendations     []string      `json:"recommendations"`
-	Bottlenecks         []string      `json:"bottlenecks"`
-}
-
-// StatisticsFormat represents the output format for statistics
-type StatisticsFormat int
-
-const (
-	StatsFormatText StatisticsFormat = iota
-	StatsFormatJSON
-	StatsFormatCSV
-)
-
-// String returns the string representation of the statistics format
-func (sf StatisticsFormat) String() string {
-	switch sf {
-	case StatsFormatText:
-		return "text"
-	case StatsFormatJSON:
-		return "json"
-	case StatsFormatCSV:
-		return "csv"
-	default:
-		return "text"
-	}
-}
-
-// ParseStatisticsFormat parses a string into a StatisticsFormat
-func ParseStatisticsFormat(s string) (StatisticsFormat, error) {
-	switch strings.ToLower(s) {
-	case "text":
-		return StatsFormatText, nil
-	case "json":
-		return StatsFormatJSON, nil
-	case "csv":
-		return StatsFormatCSV, nil
-	default:
-		return StatsFormatText, fmt.Errorf("invalid statistics format: %s (valid: text, json, csv)", s)
-	}
-}
 
 type Config struct {
 	OutputFormat        string
@@ -542,28 +421,11 @@ type Config struct {
 	Logger              *Logger
 	ShowProgress        bool
 	ProgressTracker     *ProgressTracker
-	ShowStatistics      bool
-	StatisticsFormat    StatisticsFormat
-	StatisticsCollector *StatisticsCollector
 }
 
 // Global logger instance
 var logger *Logger
 
-// NewStatisticsCollector creates a new statistics collector
-func NewStatisticsCollector(enabled bool) *StatisticsCollector {
-	if !enabled {
-		return &StatisticsCollector{enabled: false}
-	}
-	
-	return &StatisticsCollector{
-		enabled:           true,
-		startTime:         time.Now(),
-		resourceTypeStats: make(map[string]*ResourceTypeStats),
-		compartmentStats:  make(map[string]*CompartmentStats),
-		maxSamples:       100,
-	}
-}
 
 // Start marks the beginning of statistics collection
 func (sc *StatisticsCollector) Start() {
@@ -1207,7 +1069,7 @@ func (pt *ProgressTracker) formatDuration(d time.Duration) string {
 // Statistics output functions
 
 // OutputStatisticsText outputs statistics in human-readable text format
-func OutputStatisticsText(stats *ComprehensiveStatistics, writer io.Writer) error {
+func OutputStatisticsText(stats *StatisticsReport, writer io.Writer) error {
 	if stats == nil {
 		return fmt.Errorf("no statistics available")
 	}
@@ -1342,7 +1204,7 @@ func OutputStatisticsText(stats *ComprehensiveStatistics, writer io.Writer) erro
 }
 
 // OutputStatisticsJSON outputs statistics in JSON format
-func OutputStatisticsJSON(stats *ComprehensiveStatistics, writer io.Writer) error {
+func OutputStatisticsJSON(stats *StatisticsReport, writer io.Writer) error {
 	if stats == nil {
 		return fmt.Errorf("no statistics available")
 	}
@@ -1353,7 +1215,7 @@ func OutputStatisticsJSON(stats *ComprehensiveStatistics, writer io.Writer) erro
 }
 
 // OutputStatisticsCSV outputs statistics in CSV format
-func OutputStatisticsCSV(stats *ComprehensiveStatistics, writer io.Writer) error {
+func OutputStatisticsCSV(stats *StatisticsReport, writer io.Writer) error {
 	if stats == nil {
 		return fmt.Errorf("no statistics available")
 	}
@@ -1427,7 +1289,7 @@ func OutputStatisticsCSV(stats *ComprehensiveStatistics, writer io.Writer) error
 }
 
 // OutputStatistics outputs statistics in the specified format
-func OutputStatistics(stats *ComprehensiveStatistics, format StatisticsFormat, writer io.Writer) error {
+func OutputStatistics(stats *StatisticsReport, format StatisticsFormat, writer io.Writer) error {
 	switch format {
 	case StatsFormatText:
 		return OutputStatisticsText(stats, writer)
@@ -1449,6 +1311,11 @@ type OCIClients struct {
 	ContainerEngineClient   containerengine.ContainerEngineClient
 	LoadBalancerClient      loadbalancer.LoadBalancerClient
 	DatabaseClient          database.DatabaseClient
+	APIGatewayClient        apigateway.GatewayClient
+	FunctionsClient         functions.FunctionsManagementClient
+	FileStorageClient       filestorage.FileStorageClient
+	NetworkLoadBalancerClient networkloadbalancer.NetworkLoadBalancerClient
+	StreamingClient         streaming.StreamAdminClient
 }
 
 type ResourceInfo struct {
@@ -1524,6 +1391,41 @@ func initOCIClients() (*OCIClients, error) {
 	}
 	clients.DatabaseClient = dbClient
 
+	// Initialize API Gateway client
+	apiGatewayClient, err := apigateway.NewGatewayClientWithConfigurationProvider(configProvider)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create api gateway client: %w", err)
+	}
+	clients.APIGatewayClient = apiGatewayClient
+
+	// Initialize Functions client
+	functionsClient, err := functions.NewFunctionsManagementClientWithConfigurationProvider(configProvider)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create functions client: %w", err)
+	}
+	clients.FunctionsClient = functionsClient
+
+	// Initialize File Storage client
+	fileStorageClient, err := filestorage.NewFileStorageClientWithConfigurationProvider(configProvider)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create file storage client: %w", err)
+	}
+	clients.FileStorageClient = fileStorageClient
+
+	// Initialize Network Load Balancer client
+	nlbClient, err := networkloadbalancer.NewNetworkLoadBalancerClientWithConfigurationProvider(configProvider)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create network load balancer client: %w", err)
+	}
+	clients.NetworkLoadBalancerClient = nlbClient
+
+	// Initialize Streaming client
+	streamingClient, err := streaming.NewStreamAdminClientWithConfigurationProvider(configProvider)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create streaming client: %w", err)
+	}
+	clients.StreamingClient = streamingClient
+
 	return clients, nil
 }
 
@@ -1564,7 +1466,89 @@ func getCompartments(ctx context.Context, clients *OCIClients) ([]identity.Compa
 }
 
 func discoverComputeInstances(ctx context.Context, clients *OCIClients, compartmentID string) ([]ResourceInfo, error) {
-	return discoverComputeInstancesWithStats(ctx, clients, compartmentID, "", nil)
+	var resources []ResourceInfo
+	var allInstances []core.Instance
+
+	logger.Debug("Starting compute instances discovery for compartment: %s", compartmentID)
+	
+	// Implement pagination to get all instances
+	var page *string
+	pageCount := 0
+	for {
+		pageCount++
+		logger.Debug("Fetching compute instances page %d for compartment: %s", pageCount, compartmentID)
+		req := core.ListInstancesRequest{
+			CompartmentId: common.String(compartmentID),
+			Page:         page,
+		}
+
+		resp, err := clients.ComputeClient.ListInstances(ctx, req)
+		
+		if err != nil {
+			return nil, err
+		}
+
+		allInstances = append(allInstances, resp.Items...)
+
+		if resp.OpcNextPage == nil {
+			break
+		}
+		page = resp.OpcNextPage
+	}
+
+	for _, instance := range allInstances {
+		if instance.LifecycleState != core.InstanceLifecycleStateTerminated {
+			name := ""
+			if instance.DisplayName != nil {
+				name = *instance.DisplayName
+			}
+			ocid := ""
+			if instance.Id != nil {
+				ocid = *instance.Id
+			}
+			
+			additionalInfo := make(map[string]interface{})
+			
+			// Get primary IP address
+			if instance.Id != nil {
+				vnicReq := core.ListVnicAttachmentsRequest{
+					CompartmentId: common.String(compartmentID),
+					InstanceId:    instance.Id,
+				}
+				if vnicResp, err := clients.ComputeClient.ListVnicAttachments(ctx, vnicReq); err == nil {
+					for _, vnicAttachment := range vnicResp.Items {
+						if vnicAttachment.VnicId != nil {
+							vnicDetailReq := core.GetVnicRequest{
+								VnicId: vnicAttachment.VnicId,
+							}
+							if vnicDetailResp, err := clients.VirtualNetworkClient.GetVnic(ctx, vnicDetailReq); err == nil {
+								if vnicDetailResp.PrivateIp != nil {
+									additionalInfo["primary_ip"] = *vnicDetailResp.PrivateIp
+									break
+								}
+							}
+						}
+					}
+				}
+			}
+			
+			// Add shape information
+			if instance.Shape != nil {
+				additionalInfo["shape"] = *instance.Shape
+			}
+			
+			resources = append(resources, ResourceInfo{
+				ResourceType:   "compute_instance",
+				ResourceName:   name,
+				OCID:          ocid,
+				CompartmentID: compartmentID,
+				AdditionalInfo: additionalInfo,
+			})
+		}
+	}
+
+	logger.Debug("Completed compute instances discovery for compartment %s: found %d instances across %d pages", compartmentID, len(resources), pageCount)
+	return resources, nil
 }
 
 func discoverComputeInstancesWithStats(ctx context.Context, clients *OCIClients, compartmentID, compartmentName string, statsCollector *StatisticsCollector) ([]ResourceInfo, error) {
@@ -2174,6 +2158,678 @@ func discoverDRGs(ctx context.Context, clients *OCIClients, compartmentID string
 	return resources, nil
 }
 
+func discoverAutonomousDatabases(ctx context.Context, clients *OCIClients, compartmentID string) ([]ResourceInfo, error) {
+	return discoverAutonomousDatabasesWithStats(ctx, clients, compartmentID, "", nil)
+}
+
+func discoverAutonomousDatabasesWithStats(ctx context.Context, clients *OCIClients, compartmentID, compartmentName string, statsCollector *StatisticsCollector) ([]ResourceInfo, error) {
+	var resources []ResourceInfo
+	var allAutonomousDatabases []database.AutonomousDatabaseSummary
+	startTime := time.Now()
+	apiCallCount := int64(0)
+
+	// Implement pagination to get all Autonomous Databases
+	var page *string
+	for {
+		req := database.ListAutonomousDatabasesRequest{
+			CompartmentId: common.String(compartmentID),
+			Page:         page,
+		}
+
+		apiStartTime := time.Now()
+		resp, err := clients.DatabaseClient.ListAutonomousDatabases(ctx, req)
+		apiCallCount++
+		apiLatency := time.Since(apiStartTime)
+		
+		if err != nil {
+			if statsCollector != nil {
+				statsCollector.RecordStatistics(StatisticsUpdate{
+					CompartmentID:   compartmentID,
+					CompartmentName: compartmentName,
+					ResourceType:    "autonomous_database",
+					APICallCount:    1,
+					ErrorCount:      1,
+					Latency:         apiLatency,
+					OperationType:   "error",
+				})
+			}
+			return nil, err
+		}
+
+		allAutonomousDatabases = append(allAutonomousDatabases, resp.Items...)
+
+		if resp.OpcNextPage == nil {
+			break
+		}
+		page = resp.OpcNextPage
+	}
+
+	for _, adb := range allAutonomousDatabases {
+		if adb.LifecycleState != database.AutonomousDatabaseSummaryLifecycleStateTerminated {
+			name := ""
+			if adb.DisplayName != nil {
+				name = *adb.DisplayName
+			}
+			ocid := ""
+			if adb.Id != nil {
+				ocid = *adb.Id
+			}
+
+			additionalInfo := make(map[string]interface{})
+			
+			// Add workload type
+			if adb.DbWorkload != "" {
+				additionalInfo["workload_type"] = string(adb.DbWorkload)
+			}
+			
+			// Add CPU core count
+			if adb.CpuCoreCount != nil {
+				additionalInfo["cpu_core_count"] = *adb.CpuCoreCount
+			}
+			
+			// Add data storage size
+			if adb.DataStorageSizeInTBs != nil {
+				additionalInfo["data_storage_size_tb"] = *adb.DataStorageSizeInTBs
+			}
+			
+			// Add database version
+			if adb.DbVersion != nil {
+				additionalInfo["db_version"] = *adb.DbVersion
+			}
+
+			resources = append(resources, ResourceInfo{
+				ResourceType:   "autonomous_database",
+				ResourceName:   name,
+				OCID:          ocid,
+				CompartmentID: compartmentID,
+				AdditionalInfo: additionalInfo,
+			})
+		}
+	}
+
+	processingTime := time.Since(startTime)
+	
+	// Record statistics
+	if statsCollector != nil {
+		statsCollector.RecordStatistics(StatisticsUpdate{
+			CompartmentID:   compartmentID,
+			CompartmentName: compartmentName,
+			ResourceType:    "autonomous_database",
+			ResourceCount:   int64(len(resources)),
+			ProcessingTime:  processingTime,
+			APICallCount:    apiCallCount,
+			OperationType:   "complete",
+		})
+	}
+
+	return resources, nil
+}
+
+func discoverFunctions(ctx context.Context, clients *OCIClients, compartmentID string) ([]ResourceInfo, error) {
+	return discoverFunctionsWithStats(ctx, clients, compartmentID, "", nil)
+}
+
+func discoverFunctionsWithStats(ctx context.Context, clients *OCIClients, compartmentID, compartmentName string, statsCollector *StatisticsCollector) ([]ResourceInfo, error) {
+	var resources []ResourceInfo
+	var allApplications []functions.ApplicationSummary
+	startTime := time.Now()
+	apiCallCount := int64(0)
+
+	// First get all applications
+	var page *string
+	for {
+		req := functions.ListApplicationsRequest{
+			CompartmentId: common.String(compartmentID),
+			Page:         page,
+		}
+
+		apiStartTime := time.Now()
+		resp, err := clients.FunctionsClient.ListApplications(ctx, req)
+		apiCallCount++
+		apiLatency := time.Since(apiStartTime)
+		
+		if err != nil {
+			if statsCollector != nil {
+				statsCollector.RecordStatistics(StatisticsUpdate{
+					CompartmentID:   compartmentID,
+					CompartmentName: compartmentName,
+					ResourceType:    "function_application",
+					APICallCount:    1,
+					ErrorCount:      1,
+					Latency:         apiLatency,
+					OperationType:   "error",
+				})
+			}
+			return nil, err
+		}
+
+		allApplications = append(allApplications, resp.Items...)
+
+		if resp.OpcNextPage == nil {
+			break
+		}
+		page = resp.OpcNextPage
+	}
+
+	// For each application, get its functions
+	for _, app := range allApplications {
+		if app.LifecycleState != functions.ApplicationSummaryLifecycleStateDeleted {
+			// Add application as a resource
+			appName := ""
+			if app.DisplayName != nil {
+				appName = *app.DisplayName
+			}
+			appOcid := ""
+			if app.Id != nil {
+				appOcid = *app.Id
+			}
+
+			appAdditionalInfo := make(map[string]interface{})
+			if app.SubnetIds != nil && len(app.SubnetIds) > 0 {
+				appAdditionalInfo["subnet_ids"] = app.SubnetIds
+			}
+
+			resources = append(resources, ResourceInfo{
+				ResourceType:   "function_application",
+				ResourceName:   appName,
+				OCID:          appOcid,
+				CompartmentID: compartmentID,
+				AdditionalInfo: appAdditionalInfo,
+			})
+
+			// Get functions in this application
+			if app.Id != nil {
+				var funcPage *string
+				for {
+					funcReq := functions.ListFunctionsRequest{
+						ApplicationId: app.Id,
+						Page:         funcPage,
+					}
+
+					apiStartTime := time.Now()
+					funcResp, err := clients.FunctionsClient.ListFunctions(ctx, funcReq)
+					apiCallCount++
+					
+					if err != nil {
+						continue // Skip functions if we can't list them
+					}
+
+					for _, fn := range funcResp.Items {
+						if fn.LifecycleState != functions.FunctionSummaryLifecycleStateDeleted {
+							funcName := ""
+							if fn.DisplayName != nil {
+								funcName = *fn.DisplayName
+							}
+							funcOcid := ""
+							if fn.Id != nil {
+								funcOcid = *fn.Id
+							}
+
+							funcAdditionalInfo := make(map[string]interface{})
+							
+							// Add runtime
+							if fn.Image != nil {
+								funcAdditionalInfo["image"] = *fn.Image
+							}
+							
+							// Add memory in MBs
+							if fn.MemoryInMBs != nil {
+								funcAdditionalInfo["memory_mb"] = *fn.MemoryInMBs
+							}
+							
+							// Add timeout
+							if fn.TimeoutInSeconds != nil {
+								funcAdditionalInfo["timeout_seconds"] = *fn.TimeoutInSeconds
+							}
+
+							resources = append(resources, ResourceInfo{
+								ResourceType:   "function",
+								ResourceName:   funcName,
+								OCID:          funcOcid,
+								CompartmentID: compartmentID,
+								AdditionalInfo: funcAdditionalInfo,
+							})
+						}
+					}
+
+					if funcResp.OpcNextPage == nil {
+						break
+					}
+					funcPage = funcResp.OpcNextPage
+				}
+			}
+		}
+	}
+
+	processingTime := time.Since(startTime)
+	
+	// Record statistics
+	if statsCollector != nil {
+		statsCollector.RecordStatistics(StatisticsUpdate{
+			CompartmentID:   compartmentID,
+			CompartmentName: compartmentName,
+			ResourceType:    "function",
+			ResourceCount:   int64(len(resources)),
+			ProcessingTime:  processingTime,
+			APICallCount:    apiCallCount,
+			OperationType:   "complete",
+		})
+	}
+
+	return resources, nil
+}
+
+func discoverAPIGateways(ctx context.Context, clients *OCIClients, compartmentID string) ([]ResourceInfo, error) {
+	return discoverAPIGatewaysWithStats(ctx, clients, compartmentID, "", nil)
+}
+
+func discoverAPIGatewaysWithStats(ctx context.Context, clients *OCIClients, compartmentID, compartmentName string, statsCollector *StatisticsCollector) ([]ResourceInfo, error) {
+	var resources []ResourceInfo
+	var allGateways []apigateway.GatewaySummary
+	startTime := time.Now()
+	apiCallCount := int64(0)
+
+	// Implement pagination to get all API Gateways
+	var page *string
+	for {
+		req := apigateway.ListGatewaysRequest{
+			CompartmentId: common.String(compartmentID),
+			Page:         page,
+		}
+
+		apiStartTime := time.Now()
+		resp, err := clients.APIGatewayClient.ListGateways(ctx, req)
+		apiCallCount++
+		apiLatency := time.Since(apiStartTime)
+		
+		if err != nil {
+			if statsCollector != nil {
+				statsCollector.RecordStatistics(StatisticsUpdate{
+					CompartmentID:   compartmentID,
+					CompartmentName: compartmentName,
+					ResourceType:    "api_gateway",
+					APICallCount:    1,
+					ErrorCount:      1,
+					Latency:         apiLatency,
+					OperationType:   "error",
+				})
+			}
+			return nil, err
+		}
+
+		allGateways = append(allGateways, resp.Items...)
+
+		if resp.OpcNextPage == nil {
+			break
+		}
+		page = resp.OpcNextPage
+	}
+
+	for _, gateway := range allGateways {
+		if gateway.LifecycleState != apigateway.GatewaySummaryLifecycleStateDeleted {
+			name := ""
+			if gateway.DisplayName != nil {
+				name = *gateway.DisplayName
+			}
+			ocid := ""
+			if gateway.Id != nil {
+				ocid = *gateway.Id
+			}
+
+			additionalInfo := make(map[string]interface{})
+			
+			// Add endpoint type
+			if gateway.EndpointType != "" {
+				additionalInfo["endpoint_type"] = string(gateway.EndpointType)
+			}
+			
+			// Add hostname
+			if gateway.Hostname != nil {
+				additionalInfo["hostname"] = *gateway.Hostname
+			}
+			
+			// Add subnet ID
+			if gateway.SubnetId != nil {
+				additionalInfo["subnet_id"] = *gateway.SubnetId
+			}
+
+			resources = append(resources, ResourceInfo{
+				ResourceType:   "api_gateway",
+				ResourceName:   name,
+				OCID:          ocid,
+				CompartmentID: compartmentID,
+				AdditionalInfo: additionalInfo,
+			})
+		}
+	}
+
+	processingTime := time.Since(startTime)
+	
+	// Record statistics
+	if statsCollector != nil {
+		statsCollector.RecordStatistics(StatisticsUpdate{
+			CompartmentID:   compartmentID,
+			CompartmentName: compartmentName,
+			ResourceType:    "api_gateway",
+			ResourceCount:   int64(len(resources)),
+			ProcessingTime:  processingTime,
+			APICallCount:    apiCallCount,
+			OperationType:   "complete",
+		})
+	}
+
+	return resources, nil
+}
+
+func discoverFileStorageSystems(ctx context.Context, clients *OCIClients, compartmentID string) ([]ResourceInfo, error) {
+	return discoverFileStorageSystemsWithStats(ctx, clients, compartmentID, "", nil)
+}
+
+func discoverFileStorageSystemsWithStats(ctx context.Context, clients *OCIClients, compartmentID, compartmentName string, statsCollector *StatisticsCollector) ([]ResourceInfo, error) {
+	var resources []ResourceInfo
+	var allFileSystems []filestorage.FileSystemSummary
+	startTime := time.Now()
+	apiCallCount := int64(0)
+
+	// Implement pagination to get all File Systems
+	var page *string
+	for {
+		req := filestorage.ListFileSystemsRequest{
+			CompartmentId: common.String(compartmentID),
+			Page:         page,
+		}
+
+		apiStartTime := time.Now()
+		resp, err := clients.FileStorageClient.ListFileSystems(ctx, req)
+		apiCallCount++
+		apiLatency := time.Since(apiStartTime)
+		
+		if err != nil {
+			if statsCollector != nil {
+				statsCollector.RecordStatistics(StatisticsUpdate{
+					CompartmentID:   compartmentID,
+					CompartmentName: compartmentName,
+					ResourceType:    "file_storage_system",
+					APICallCount:    1,
+					ErrorCount:      1,
+					Latency:         apiLatency,
+					OperationType:   "error",
+				})
+			}
+			return nil, err
+		}
+
+		allFileSystems = append(allFileSystems, resp.Items...)
+
+		if resp.OpcNextPage == nil {
+			break
+		}
+		page = resp.OpcNextPage
+	}
+
+	for _, fs := range allFileSystems {
+		if fs.LifecycleState != filestorage.FileSystemSummaryLifecycleStateDeleted {
+			name := ""
+			if fs.DisplayName != nil {
+				name = *fs.DisplayName
+			}
+			ocid := ""
+			if fs.Id != nil {
+				ocid = *fs.Id
+			}
+
+			additionalInfo := make(map[string]interface{})
+			
+			// Add availability domain
+			if fs.AvailabilityDomain != nil {
+				additionalInfo["availability_domain"] = *fs.AvailabilityDomain
+			}
+			
+			// Add metered bytes
+			if fs.MeteredBytes != nil {
+				additionalInfo["metered_bytes"] = *fs.MeteredBytes
+			}
+
+			resources = append(resources, ResourceInfo{
+				ResourceType:   "file_storage_system",
+				ResourceName:   name,
+				OCID:          ocid,
+				CompartmentID: compartmentID,
+				AdditionalInfo: additionalInfo,
+			})
+		}
+	}
+
+	processingTime := time.Since(startTime)
+	
+	// Record statistics
+	if statsCollector != nil {
+		statsCollector.RecordStatistics(StatisticsUpdate{
+			CompartmentID:   compartmentID,
+			CompartmentName: compartmentName,
+			ResourceType:    "file_storage_system",
+			ResourceCount:   int64(len(resources)),
+			ProcessingTime:  processingTime,
+			APICallCount:    apiCallCount,
+			OperationType:   "complete",
+		})
+	}
+
+	return resources, nil
+}
+
+func discoverNetworkLoadBalancers(ctx context.Context, clients *OCIClients, compartmentID string) ([]ResourceInfo, error) {
+	return discoverNetworkLoadBalancersWithStats(ctx, clients, compartmentID, "", nil)
+}
+
+func discoverNetworkLoadBalancersWithStats(ctx context.Context, clients *OCIClients, compartmentID, compartmentName string, statsCollector *StatisticsCollector) ([]ResourceInfo, error) {
+	var resources []ResourceInfo
+	var allNLBs []networkloadbalancer.NetworkLoadBalancerSummary
+	startTime := time.Now()
+	apiCallCount := int64(0)
+
+	// Implement pagination to get all Network Load Balancers
+	var page *string
+	for {
+		req := networkloadbalancer.ListNetworkLoadBalancersRequest{
+			CompartmentId: common.String(compartmentID),
+			Page:         page,
+		}
+
+		apiStartTime := time.Now()
+		resp, err := clients.NetworkLoadBalancerClient.ListNetworkLoadBalancers(ctx, req)
+		apiCallCount++
+		apiLatency := time.Since(apiStartTime)
+		
+		if err != nil {
+			if statsCollector != nil {
+				statsCollector.RecordStatistics(StatisticsUpdate{
+					CompartmentID:   compartmentID,
+					CompartmentName: compartmentName,
+					ResourceType:    "network_load_balancer",
+					APICallCount:    1,
+					ErrorCount:      1,
+					Latency:         apiLatency,
+					OperationType:   "error",
+				})
+			}
+			return nil, err
+		}
+
+		allNLBs = append(allNLBs, resp.Items...)
+
+		if resp.OpcNextPage == nil {
+			break
+		}
+		page = resp.OpcNextPage
+	}
+
+	for _, nlb := range allNLBs {
+		if nlb.LifecycleState != networkloadbalancer.NetworkLoadBalancerSummaryLifecycleStateDeleted {
+			name := ""
+			if nlb.DisplayName != nil {
+				name = *nlb.DisplayName
+			}
+			ocid := ""
+			if nlb.Id != nil {
+				ocid = *nlb.Id
+			}
+
+			additionalInfo := make(map[string]interface{})
+			
+			// Add IP addresses
+			if nlb.IpAddresses != nil && len(nlb.IpAddresses) > 0 {
+				var ipAddresses []string
+				for _, ipAddr := range nlb.IpAddresses {
+					if ipAddr.IpAddress != nil {
+						ipAddresses = append(ipAddresses, *ipAddr.IpAddress)
+					}
+				}
+				if len(ipAddresses) > 0 {
+					additionalInfo["ip_addresses"] = ipAddresses
+				}
+			}
+			
+			// Add is private
+			if nlb.IsPrivate != nil {
+				additionalInfo["is_private"] = *nlb.IsPrivate
+			}
+			
+			// Add subnet ID
+			if nlb.SubnetId != nil {
+				additionalInfo["subnet_id"] = *nlb.SubnetId
+			}
+
+			resources = append(resources, ResourceInfo{
+				ResourceType:   "network_load_balancer",
+				ResourceName:   name,
+				OCID:          ocid,
+				CompartmentID: compartmentID,
+				AdditionalInfo: additionalInfo,
+			})
+		}
+	}
+
+	processingTime := time.Since(startTime)
+	
+	// Record statistics
+	if statsCollector != nil {
+		statsCollector.RecordStatistics(StatisticsUpdate{
+			CompartmentID:   compartmentID,
+			CompartmentName: compartmentName,
+			ResourceType:    "network_load_balancer",
+			ResourceCount:   int64(len(resources)),
+			ProcessingTime:  processingTime,
+			APICallCount:    apiCallCount,
+			OperationType:   "complete",
+		})
+	}
+
+	return resources, nil
+}
+
+func discoverStreams(ctx context.Context, clients *OCIClients, compartmentID string) ([]ResourceInfo, error) {
+	return discoverStreamsWithStats(ctx, clients, compartmentID, "", nil)
+}
+
+func discoverStreamsWithStats(ctx context.Context, clients *OCIClients, compartmentID, compartmentName string, statsCollector *StatisticsCollector) ([]ResourceInfo, error) {
+	var resources []ResourceInfo
+	var allStreams []streaming.StreamSummary
+	startTime := time.Now()
+	apiCallCount := int64(0)
+
+	// Implement pagination to get all Streams
+	var page *string
+	for {
+		req := streaming.ListStreamsRequest{
+			CompartmentId: common.String(compartmentID),
+			Page:         page,
+		}
+
+		apiStartTime := time.Now()
+		resp, err := clients.StreamingClient.ListStreams(ctx, req)
+		apiCallCount++
+		apiLatency := time.Since(apiStartTime)
+		
+		if err != nil {
+			if statsCollector != nil {
+				statsCollector.RecordStatistics(StatisticsUpdate{
+					CompartmentID:   compartmentID,
+					CompartmentName: compartmentName,
+					ResourceType:    "stream",
+					APICallCount:    1,
+					ErrorCount:      1,
+					Latency:         apiLatency,
+					OperationType:   "error",
+				})
+			}
+			return nil, err
+		}
+
+		allStreams = append(allStreams, resp.Items...)
+
+		if resp.OpcNextPage == nil {
+			break
+		}
+		page = resp.OpcNextPage
+	}
+
+	for _, stream := range allStreams {
+		if stream.LifecycleState != streaming.StreamSummaryLifecycleStateDeleted {
+			name := ""
+			if stream.Name != nil {
+				name = *stream.Name
+			}
+			ocid := ""
+			if stream.Id != nil {
+				ocid = *stream.Id
+			}
+
+			additionalInfo := make(map[string]interface{})
+			
+			// Add partitions
+			if stream.Partitions != nil {
+				additionalInfo["partitions"] = *stream.Partitions
+			}
+			
+			// Add retention in hours
+			if stream.RetentionInHours != nil {
+				additionalInfo["retention_hours"] = *stream.RetentionInHours
+			}
+			
+			// Add stream pool ID
+			if stream.StreamPoolId != nil {
+				additionalInfo["stream_pool_id"] = *stream.StreamPoolId
+			}
+
+			resources = append(resources, ResourceInfo{
+				ResourceType:   "stream",
+				ResourceName:   name,
+				OCID:          ocid,
+				CompartmentID: compartmentID,
+				AdditionalInfo: additionalInfo,
+			})
+		}
+	}
+
+	processingTime := time.Since(startTime)
+	
+	// Record statistics
+	if statsCollector != nil {
+		statsCollector.RecordStatistics(StatisticsUpdate{
+			CompartmentID:   compartmentID,
+			CompartmentName: compartmentName,
+			ResourceType:    "stream",
+			ResourceCount:   int64(len(resources)),
+			ProcessingTime:  processingTime,
+			APICallCount:    apiCallCount,
+			OperationType:   "complete",
+		})
+	}
+
+	return resources, nil
+}
+
 func isRetriableError(err error) bool {
 	// Check if the error is a retriable error (non-existent resource, permission issue, etc.)
 	// These should not cause the entire program to fail
@@ -2507,6 +3163,162 @@ func discoverAllResourcesWithProgressAndStats(ctx context.Context, clients *OCIC
 				logger.Verbose("Skipping DRGs in compartment %s due to retriable error: %v", compartmentName, err)
 			}
 			// progressTracker.IncrementResourceType()
+
+			// Discover Autonomous Databases
+			logger.Verbose("  Discovering Autonomous Databases in compartment: %s", compartmentName)
+			var autonomousDBs []ResourceInfo
+			err = withRetryAndProgress(ctx, func() error {
+				var retryErr error
+				autonomousDBs, retryErr = discoverAutonomousDatabasesWithStats(ctx, clients, compartmentID, compartmentName, statsCollector)
+				return retryErr
+			}, 3, "autonomous databases discovery", progressTracker)
+			
+			if err == nil {
+				compartmentResources = append(compartmentResources, autonomousDBs...)
+				if progressTracker != nil {
+					progressTracker.Update(ProgressUpdate{
+						CompartmentName: compartmentName,
+						Operation:      "Autonomous Databases discovered",
+						ResourceCount:  int64(len(autonomousDBs)),
+					})
+				}
+				logger.Info("  Found %d Autonomous Databases", len(autonomousDBs))
+				logger.Debug("  Autonomous Databases discovery completed successfully")
+			} else if !isRetriableError(err) {
+				logger.Error("Failed to discover Autonomous Databases in compartment %s: %v", compartmentName, err)
+			} else {
+				logger.Verbose("Skipping Autonomous Databases in compartment %s due to retriable error: %v", compartmentName, err)
+			}
+
+			// Discover Functions
+			logger.Verbose("  Discovering Functions in compartment: %s", compartmentName)
+			var functions []ResourceInfo
+			err = withRetryAndProgress(ctx, func() error {
+				var retryErr error
+				functions, retryErr = discoverFunctionsWithStats(ctx, clients, compartmentID, compartmentName, statsCollector)
+				return retryErr
+			}, 3, "functions discovery", progressTracker)
+			
+			if err == nil {
+				compartmentResources = append(compartmentResources, functions...)
+				if progressTracker != nil {
+					progressTracker.Update(ProgressUpdate{
+						CompartmentName: compartmentName,
+						Operation:      "Functions discovered",
+						ResourceCount:  int64(len(functions)),
+					})
+				}
+				logger.Info("  Found %d Functions", len(functions))
+				logger.Debug("  Functions discovery completed successfully")
+			} else if !isRetriableError(err) {
+				logger.Error("Failed to discover Functions in compartment %s: %v", compartmentName, err)
+			} else {
+				logger.Verbose("Skipping Functions in compartment %s due to retriable error: %v", compartmentName, err)
+			}
+
+			// Discover API Gateways
+			logger.Verbose("  Discovering API Gateways in compartment: %s", compartmentName)
+			var apiGateways []ResourceInfo
+			err = withRetryAndProgress(ctx, func() error {
+				var retryErr error
+				apiGateways, retryErr = discoverAPIGatewaysWithStats(ctx, clients, compartmentID, compartmentName, statsCollector)
+				return retryErr
+			}, 3, "api gateways discovery", progressTracker)
+			
+			if err == nil {
+				compartmentResources = append(compartmentResources, apiGateways...)
+				if progressTracker != nil {
+					progressTracker.Update(ProgressUpdate{
+						CompartmentName: compartmentName,
+						Operation:      "API Gateways discovered",
+						ResourceCount:  int64(len(apiGateways)),
+					})
+				}
+				logger.Info("  Found %d API Gateways", len(apiGateways))
+				logger.Debug("  API Gateways discovery completed successfully")
+			} else if !isRetriableError(err) {
+				logger.Error("Failed to discover API Gateways in compartment %s: %v", compartmentName, err)
+			} else {
+				logger.Verbose("Skipping API Gateways in compartment %s due to retriable error: %v", compartmentName, err)
+			}
+
+			// Discover File Storage Systems
+			logger.Verbose("  Discovering File Storage Systems in compartment: %s", compartmentName)
+			var fileSystems []ResourceInfo
+			err = withRetryAndProgress(ctx, func() error {
+				var retryErr error
+				fileSystems, retryErr = discoverFileStorageSystemsWithStats(ctx, clients, compartmentID, compartmentName, statsCollector)
+				return retryErr
+			}, 3, "file storage systems discovery", progressTracker)
+			
+			if err == nil {
+				compartmentResources = append(compartmentResources, fileSystems...)
+				if progressTracker != nil {
+					progressTracker.Update(ProgressUpdate{
+						CompartmentName: compartmentName,
+						Operation:      "File Storage Systems discovered",
+						ResourceCount:  int64(len(fileSystems)),
+					})
+				}
+				logger.Info("  Found %d File Storage Systems", len(fileSystems))
+				logger.Debug("  File Storage Systems discovery completed successfully")
+			} else if !isRetriableError(err) {
+				logger.Error("Failed to discover File Storage Systems in compartment %s: %v", compartmentName, err)
+			} else {
+				logger.Verbose("Skipping File Storage Systems in compartment %s due to retriable error: %v", compartmentName, err)
+			}
+
+			// Discover Network Load Balancers
+			logger.Verbose("  Discovering Network Load Balancers in compartment: %s", compartmentName)
+			var networkLBs []ResourceInfo
+			err = withRetryAndProgress(ctx, func() error {
+				var retryErr error
+				networkLBs, retryErr = discoverNetworkLoadBalancersWithStats(ctx, clients, compartmentID, compartmentName, statsCollector)
+				return retryErr
+			}, 3, "network load balancers discovery", progressTracker)
+			
+			if err == nil {
+				compartmentResources = append(compartmentResources, networkLBs...)
+				if progressTracker != nil {
+					progressTracker.Update(ProgressUpdate{
+						CompartmentName: compartmentName,
+						Operation:      "Network Load Balancers discovered",
+						ResourceCount:  int64(len(networkLBs)),
+					})
+				}
+				logger.Info("  Found %d Network Load Balancers", len(networkLBs))
+				logger.Debug("  Network Load Balancers discovery completed successfully")
+			} else if !isRetriableError(err) {
+				logger.Error("Failed to discover Network Load Balancers in compartment %s: %v", compartmentName, err)
+			} else {
+				logger.Verbose("Skipping Network Load Balancers in compartment %s due to retriable error: %v", compartmentName, err)
+			}
+
+			// Discover Streams
+			logger.Verbose("  Discovering Streams in compartment: %s", compartmentName)
+			var streams []ResourceInfo
+			err = withRetryAndProgress(ctx, func() error {
+				var retryErr error
+				streams, retryErr = discoverStreamsWithStats(ctx, clients, compartmentID, compartmentName, statsCollector)
+				return retryErr
+			}, 3, "streams discovery", progressTracker)
+			
+			if err == nil {
+				compartmentResources = append(compartmentResources, streams...)
+				if progressTracker != nil {
+					progressTracker.Update(ProgressUpdate{
+						CompartmentName: compartmentName,
+						Operation:      "Streams discovered",
+						ResourceCount:  int64(len(streams)),
+					})
+				}
+				logger.Info("  Found %d Streams", len(streams))
+				logger.Debug("  Streams discovery completed successfully")
+			} else if !isRetriableError(err) {
+				logger.Error("Failed to discover Streams in compartment %s: %v", compartmentName, err)
+			} else {
+				logger.Verbose("Skipping Streams in compartment %s due to retriable error: %v", compartmentName, err)
+			}
 			
 			// Mark compartment as completed
 			if progressTracker != nil {
@@ -2605,8 +3417,6 @@ func main() {
 	var logLevelStr string
 	var showProgress bool
 	var noProgress bool
-	var showStats bool
-	var statsFormatStr string
 	
 	flag.StringVar(&config.OutputFormat, "format", "json", "Output format: csv, tsv, or json")
 	flag.StringVar(&config.OutputFormat, "f", "json", "Output format: csv, tsv, or json (shorthand)")
@@ -2616,9 +3426,6 @@ func main() {
 	flag.StringVar(&logLevelStr, "l", "normal", "Log level: silent, normal, verbose, debug (shorthand)")
 	flag.BoolVar(&showProgress, "progress", false, "Show progress bar with real-time statistics")
 	flag.BoolVar(&noProgress, "no-progress", false, "Disable progress bar (default behavior)")
-	flag.BoolVar(&showStats, "stats", false, "Show comprehensive statistics report after execution")
-	flag.BoolVar(&showStats, "s", false, "Show comprehensive statistics report after execution (shorthand)")
-	flag.StringVar(&statsFormatStr, "stats-format", "text", "Statistics output format: text, json, csv")
 	flag.Parse()
 
 	// Set timeout duration
@@ -2633,16 +3440,6 @@ func main() {
 	}
 	config.LogLevel = logLevel
 	
-	// Parse and validate statistics format
-	statsFormat, err := ParseStatisticsFormat(statsFormatStr)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		flag.Usage()
-		os.Exit(1)
-	}
-	config.StatisticsFormat = statsFormat
-	config.ShowStatistics = showStats
-	
 	// Configure progress bar - default to enabled unless explicitly disabled or silent mode
 	config.ShowProgress = showProgress || (!noProgress && logLevel != LogLevelSilent)
 	
@@ -2652,9 +3449,6 @@ func main() {
 	
 	// Initialize progress tracker
 	config.ProgressTracker = NewProgressTracker(config.ShowProgress, 0, 0)
-	
-	// Initialize statistics collector
-	config.StatisticsCollector = NewStatisticsCollector(config.ShowStatistics)
 
 	// Validate output format
 	validFormats := []string{"csv", "tsv", "json"}
@@ -2687,14 +3481,9 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), config.Timeout)
 	defer cancel()
 
-	// Start statistics collection
-	if config.StatisticsCollector != nil {
-		config.StatisticsCollector.Start()
-	}
-
 	// Discover all resources
 	logger.Info("Starting resource discovery with %v timeout...", config.Timeout)
-	logger.Debug("Discovery configuration - Format: %s, Timeout: %v, LogLevel: %s, Progress: %v, Stats: %v", config.OutputFormat, config.Timeout, config.LogLevel, config.ShowProgress, config.ShowStatistics)
+	logger.Debug("Discovery configuration - Format: %s, Timeout: %v, LogLevel: %s, Progress: %v", config.OutputFormat, config.Timeout, config.LogLevel, config.ShowProgress)
 	resources, err := discoverAllResourcesWithProgress(ctx, clients, config.ProgressTracker)
 	if err != nil {
 		logger.Error("Error discovering resources: %v", err)
@@ -2708,16 +3497,4 @@ func main() {
 		os.Exit(1)
 	}
 	logger.Verbose("Resource output completed successfully")
-	
-	// Output statistics if requested
-	if config.ShowStatistics && config.StatisticsCollector != nil {
-		config.StatisticsCollector.Stop()
-		report := config.StatisticsCollector.GenerateReport()
-		logger.Info("Generating comprehensive statistics report...")
-		if err := OutputStatisticsReport(report, config.StatisticsFormat); err != nil {
-			logger.Error("Error outputting statistics: %v", err)
-			os.Exit(1)
-		}
-		logger.Verbose("Statistics report completed successfully")
-	}
 }

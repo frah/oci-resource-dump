@@ -1,0 +1,12 @@
+# command-line-arguments
+./main.go:745:24: cannot use resourceStats (variable of type map[string]ResourceTypeStats) as map[string]*ResourceTypeStats value in struct literal
+./main.go:746:24: cannot use compartmentStats (variable of type map[string]CompartmentStats) as map[string]*CompartmentStats value in struct literal
+./main.go:752:32: method StatisticsCollector.generatePerformanceAnalysis already declared at ./main.go:292:32
+./main.go:1221:50: stats.GeneratedAt undefined (type *StatisticsReport has no field or method GeneratedAt)
+./main.go:1222:51: stats.CliVersion undefined (type *StatisticsReport has no field or method CliVersion)
+./main.go:1228:75: stats.ExecutionSummary.TotalExecutionTime undefined (type ExecutionSummary has no field or method TotalExecutionTime)
+./main.go:1229:76: stats.ExecutionSummary.TotalResourcesFound undefined (type ExecutionSummary has no field or method TotalResourcesFound)
+./main.go:1230:70: stats.ExecutionSummary.TotalAPICallsExecuted undefined (type ExecutionSummary has no field or method TotalAPICallsExecuted)
+./main.go:1231:67: stats.ExecutionSummary.TotalErrorsEncountered undefined (type ExecutionSummary has no field or method TotalErrorsEncountered)
+./main.go:1232:68: stats.ExecutionSummary.TotalRetriesPerformed undefined (type ExecutionSummary has no field or method TotalRetriesPerformed)
+./main.go:1232:68: too many errors
