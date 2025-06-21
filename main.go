@@ -11,8 +11,12 @@ import (
 
 	"github.com/oracle/oci-go-sdk/v65/common"
 	"github.com/oracle/oci-go-sdk/v65/common/auth"
+	"github.com/oracle/oci-go-sdk/v65/containerengine"
 	"github.com/oracle/oci-go-sdk/v65/core"
+	"github.com/oracle/oci-go-sdk/v65/database"
 	"github.com/oracle/oci-go-sdk/v65/identity"
+	"github.com/oracle/oci-go-sdk/v65/loadbalancer"
+	"github.com/oracle/oci-go-sdk/v65/objectstorage"
 )
 
 type Config struct {
@@ -20,17 +24,22 @@ type Config struct {
 }
 
 type OCIClients struct {
-	ComputeClient  core.ComputeClient
-	VirtualNetworkClient core.VirtualNetworkClient
-	BlockStorageClient core.BlockstorageClient
-	IdentityClient identity.IdentityClient
+	ComputeClient           core.ComputeClient
+	VirtualNetworkClient    core.VirtualNetworkClient
+	BlockStorageClient      core.BlockstorageClient
+	IdentityClient          identity.IdentityClient
+	ObjectStorageClient     objectstorage.ObjectStorageClient
+	ContainerEngineClient   containerengine.ContainerEngineClient
+	LoadBalancerClient      loadbalancer.LoadBalancerClient
+	DatabaseClient          database.DatabaseClient
 }
 
 type ResourceInfo struct {
-	ResourceType string
-	ResourceName string
-	OCID         string
-	CompartmentID string
+	ResourceType   string                 `json:"resource_type"`
+	ResourceName   string                 `json:"resource_name"`
+	OCID          string                 `json:"ocid"`
+	CompartmentID string                 `json:"compartment_id"`
+	AdditionalInfo map[string]interface{} `json:"additional_info"`
 }
 
 func initOCIClients() (*OCIClients, error) {
@@ -69,6 +78,34 @@ func initOCIClients() (*OCIClients, error) {
 		return nil, fmt.Errorf("failed to create identity client: %w", err)
 	}
 	clients.IdentityClient = identityClient
+
+	// Initialize Object Storage client
+	osClient, err := objectstorage.NewObjectStorageClientWithConfigurationProvider(configProvider)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create object storage client: %w", err)
+	}
+	clients.ObjectStorageClient = osClient
+
+	// Initialize Container Engine client (OKE)
+	ceClient, err := containerengine.NewContainerEngineClientWithConfigurationProvider(configProvider)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create container engine client: %w", err)
+	}
+	clients.ContainerEngineClient = ceClient
+
+	// Initialize Load Balancer client
+	lbClient, err := loadbalancer.NewLoadBalancerClientWithConfigurationProvider(configProvider)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create load balancer client: %w", err)
+	}
+	clients.LoadBalancerClient = lbClient
+
+	// Initialize Database client
+	dbClient, err := database.NewDatabaseClientWithConfigurationProvider(configProvider)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create database client: %w", err)
+	}
+	clients.DatabaseClient = dbClient
 
 	return clients, nil
 }
@@ -132,11 +169,42 @@ func discoverComputeInstances(ctx context.Context, clients *OCIClients, compartm
 				ocid = *instance.Id
 			}
 			
+			additionalInfo := make(map[string]interface{})
+			
+			// Get primary IP address
+			if instance.Id != nil {
+				vnicReq := core.ListVnicAttachmentsRequest{
+					CompartmentId: common.String(compartmentID),
+					InstanceId:    instance.Id,
+				}
+				if vnicResp, err := clients.ComputeClient.ListVnicAttachments(ctx, vnicReq); err == nil {
+					for _, vnicAttachment := range vnicResp.Items {
+						if vnicAttachment.VnicId != nil {
+							vnicDetailReq := core.GetVnicRequest{
+								VnicId: vnicAttachment.VnicId,
+							}
+							if vnicDetailResp, err := clients.VirtualNetworkClient.GetVnic(ctx, vnicDetailReq); err == nil {
+								if vnicDetailResp.PrivateIp != nil {
+									additionalInfo["primary_ip"] = *vnicDetailResp.PrivateIp
+									break
+								}
+							}
+						}
+					}
+				}
+			}
+			
+			// Add shape information
+			if instance.Shape != nil {
+				additionalInfo["shape"] = *instance.Shape
+			}
+			
 			resources = append(resources, ResourceInfo{
-				ResourceType:  "compute_instance",
-				ResourceName:  name,
+				ResourceType:   "compute_instance",
+				ResourceName:   name,
 				OCID:          ocid,
 				CompartmentID: compartmentID,
+				AdditionalInfo: additionalInfo,
 			})
 		}
 	}
@@ -167,11 +235,24 @@ func discoverVCNs(ctx context.Context, clients *OCIClients, compartmentID string
 				ocid = *vcn.Id
 			}
 			
+			additionalInfo := make(map[string]interface{})
+			
+			// Add CIDR blocks
+			if vcn.CidrBlocks != nil && len(vcn.CidrBlocks) > 0 {
+				additionalInfo["cidr_blocks"] = vcn.CidrBlocks
+			}
+			
+			// Add DNS label
+			if vcn.DnsLabel != nil {
+				additionalInfo["dns_label"] = *vcn.DnsLabel
+			}
+			
 			resources = append(resources, ResourceInfo{
-				ResourceType:  "vcn",
-				ResourceName:  name,
+				ResourceType:   "vcn",
+				ResourceName:   name,
 				OCID:          ocid,
 				CompartmentID: compartmentID,
+				AdditionalInfo: additionalInfo,
 			})
 		}
 	}
@@ -202,11 +283,24 @@ func discoverSubnets(ctx context.Context, clients *OCIClients, compartmentID str
 				ocid = *subnet.Id
 			}
 			
+			additionalInfo := make(map[string]interface{})
+			
+			// Add CIDR information
+			if subnet.CidrBlock != nil {
+				additionalInfo["cidr"] = *subnet.CidrBlock
+			}
+			
+			// Add availability domain
+			if subnet.AvailabilityDomain != nil {
+				additionalInfo["availability_domain"] = *subnet.AvailabilityDomain
+			}
+			
 			resources = append(resources, ResourceInfo{
-				ResourceType:  "subnet",
-				ResourceName:  name,
+				ResourceType:   "subnet",
+				ResourceName:   name,
 				OCID:          ocid,
 				CompartmentID: compartmentID,
+				AdditionalInfo: additionalInfo,
 			})
 		}
 	}
@@ -237,11 +331,230 @@ func discoverBlockVolumes(ctx context.Context, clients *OCIClients, compartmentI
 				ocid = *volume.Id
 			}
 			
+			additionalInfo := make(map[string]interface{})
+			
+			// Add volume size
+			if volume.SizeInGBs != nil {
+				additionalInfo["size_gb"] = *volume.SizeInGBs
+			}
+			
+			// Add volume performance tier
+			if volume.VpusPerGB != nil {
+				additionalInfo["vpus_per_gb"] = *volume.VpusPerGB
+			}
+			
 			resources = append(resources, ResourceInfo{
-				ResourceType:  "block_volume",
-				ResourceName:  name,
+				ResourceType:   "block_volume",
+				ResourceName:   name,
 				OCID:          ocid,
 				CompartmentID: compartmentID,
+				AdditionalInfo: additionalInfo,
+			})
+		}
+	}
+
+	return resources, nil
+}
+
+func discoverObjectStorageBuckets(ctx context.Context, clients *OCIClients, compartmentID string) ([]ResourceInfo, error) {
+	var resources []ResourceInfo
+
+	// Get namespace
+	namespaceReq := objectstorage.GetNamespaceRequest{}
+	namespaceResp, err := clients.ObjectStorageClient.GetNamespace(ctx, namespaceReq)
+	if err != nil {
+		return nil, err
+	}
+
+	req := objectstorage.ListBucketsRequest{
+		CompartmentId: common.String(compartmentID),
+		NamespaceName: namespaceResp.Value,
+	}
+
+	resp, err := clients.ObjectStorageClient.ListBuckets(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, bucket := range resp.Items {
+		additionalInfo := make(map[string]interface{})
+		// Storage tier is not available in BucketSummary
+		
+		resources = append(resources, ResourceInfo{
+			ResourceType:   "object_storage_bucket",
+			ResourceName:   *bucket.Name,
+			OCID:          "", // Buckets don't have OCIDs
+			CompartmentID: compartmentID,
+			AdditionalInfo: additionalInfo,
+		})
+	}
+
+	return resources, nil
+}
+
+func discoverOKEClusters(ctx context.Context, clients *OCIClients, compartmentID string) ([]ResourceInfo, error) {
+	var resources []ResourceInfo
+
+	req := containerengine.ListClustersRequest{
+		CompartmentId: common.String(compartmentID),
+	}
+
+	resp, err := clients.ContainerEngineClient.ListClusters(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, cluster := range resp.Items {
+		if cluster.LifecycleState != containerengine.ClusterSummaryLifecycleStateDeleted {
+			name := ""
+			if cluster.Name != nil {
+				name = *cluster.Name
+			}
+			ocid := ""
+			if cluster.Id != nil {
+				ocid = *cluster.Id
+			}
+
+			additionalInfo := make(map[string]interface{})
+			if cluster.KubernetesVersion != nil {
+				additionalInfo["kubernetes_version"] = *cluster.KubernetesVersion
+			}
+			
+			resources = append(resources, ResourceInfo{
+				ResourceType:   "oke_cluster",
+				ResourceName:   name,
+				OCID:          ocid,
+				CompartmentID: compartmentID,
+				AdditionalInfo: additionalInfo,
+			})
+		}
+	}
+
+	return resources, nil
+}
+
+func discoverLoadBalancers(ctx context.Context, clients *OCIClients, compartmentID string) ([]ResourceInfo, error) {
+	var resources []ResourceInfo
+
+	req := loadbalancer.ListLoadBalancersRequest{
+		CompartmentId: common.String(compartmentID),
+	}
+
+	resp, err := clients.LoadBalancerClient.ListLoadBalancers(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, lb := range resp.Items {
+		if lb.LifecycleState != loadbalancer.LoadBalancerLifecycleStateDeleted {
+			name := ""
+			if lb.DisplayName != nil {
+				name = *lb.DisplayName
+			}
+			ocid := ""
+			if lb.Id != nil {
+				ocid = *lb.Id
+			}
+
+			additionalInfo := make(map[string]interface{})
+			if lb.ShapeName != nil {
+				additionalInfo["shape"] = *lb.ShapeName
+			}
+			if lb.IpAddresses != nil && len(lb.IpAddresses) > 0 {
+				var ipAddresses []string
+				for _, ip := range lb.IpAddresses {
+					if ip.IpAddress != nil {
+						ipAddresses = append(ipAddresses, *ip.IpAddress)
+					}
+				}
+				additionalInfo["ip_addresses"] = ipAddresses
+			}
+			
+			resources = append(resources, ResourceInfo{
+				ResourceType:   "load_balancer",
+				ResourceName:   name,
+				OCID:          ocid,
+				CompartmentID: compartmentID,
+				AdditionalInfo: additionalInfo,
+			})
+		}
+	}
+
+	return resources, nil
+}
+
+func discoverDatabases(ctx context.Context, clients *OCIClients, compartmentID string) ([]ResourceInfo, error) {
+	var resources []ResourceInfo
+
+	req := database.ListDbSystemsRequest{
+		CompartmentId: common.String(compartmentID),
+	}
+
+	resp, err := clients.DatabaseClient.ListDbSystems(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, dbSystem := range resp.Items {
+		if dbSystem.LifecycleState != database.DbSystemSummaryLifecycleStateTerminated {
+			name := ""
+			if dbSystem.DisplayName != nil {
+				name = *dbSystem.DisplayName
+			}
+			ocid := ""
+			if dbSystem.Id != nil {
+				ocid = *dbSystem.Id
+			}
+
+			additionalInfo := make(map[string]interface{})
+			if dbSystem.Shape != nil {
+				additionalInfo["shape"] = *dbSystem.Shape
+			}
+			// DatabaseEdition is available in DbSystemSummary
+			additionalInfo["database_edition"] = string(dbSystem.DatabaseEdition)
+			
+			resources = append(resources, ResourceInfo{
+				ResourceType:   "database_system",
+				ResourceName:   name,
+				OCID:          ocid,
+				CompartmentID: compartmentID,
+				AdditionalInfo: additionalInfo,
+			})
+		}
+	}
+
+	return resources, nil
+}
+
+func discoverDRGs(ctx context.Context, clients *OCIClients, compartmentID string) ([]ResourceInfo, error) {
+	var resources []ResourceInfo
+
+	req := core.ListDrgsRequest{
+		CompartmentId: common.String(compartmentID),
+	}
+
+	resp, err := clients.VirtualNetworkClient.ListDrgs(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, drg := range resp.Items {
+		if drg.LifecycleState != core.DrgLifecycleStateTerminated {
+			name := ""
+			if drg.DisplayName != nil {
+				name = *drg.DisplayName
+			}
+			ocid := ""
+			if drg.Id != nil {
+				ocid = *drg.Id
+			}
+			
+			resources = append(resources, ResourceInfo{
+				ResourceType:   "drg",
+				ResourceName:   name,
+				OCID:          ocid,
+				CompartmentID: compartmentID,
+				AdditionalInfo: make(map[string]interface{}),
 			})
 		}
 	}
@@ -268,44 +581,106 @@ func discoverAllResources(ctx context.Context, clients *OCIClients) ([]ResourceI
 	var allResources []ResourceInfo
 
 	// Get all compartments
+	fmt.Fprintf(os.Stderr, "Getting compartments...\n")
 	compartments, err := getCompartments(ctx, clients)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get compartments: %w", err)
 	}
+	fmt.Fprintf(os.Stderr, "Found %d compartments\n", len(compartments))
 
 	// Discover resources in each compartment
-	for _, compartment := range compartments {
+	for i, compartment := range compartments {
 		compartmentID := *compartment.Id
+		compartmentName := "root"
+		if compartment.Name != nil {
+			compartmentName = *compartment.Name
+		}
+		
+		fmt.Fprintf(os.Stderr, "Processing compartment %d/%d: %s\n", i+1, len(compartments), compartmentName)
 
 		// Discover compute instances
+		fmt.Fprintf(os.Stderr, "  Discovering compute instances...\n")
 		if instances, err := discoverComputeInstances(ctx, clients, compartmentID); err == nil {
 			allResources = append(allResources, instances...)
+			fmt.Fprintf(os.Stderr, "  Found %d compute instances\n", len(instances))
 		} else if !isRetriableError(err) {
-			fmt.Fprintf(os.Stderr, "Warning: Failed to discover compute instances in compartment %s: %v\n", compartmentID, err)
+			fmt.Fprintf(os.Stderr, "  Warning: Failed to discover compute instances: %v\n", err)
 		}
 
 		// Discover VCNs
+		fmt.Fprintf(os.Stderr, "  Discovering VCNs...\n")
 		if vcns, err := discoverVCNs(ctx, clients, compartmentID); err == nil {
 			allResources = append(allResources, vcns...)
+			fmt.Fprintf(os.Stderr, "  Found %d VCNs\n", len(vcns))
 		} else if !isRetriableError(err) {
-			fmt.Fprintf(os.Stderr, "Warning: Failed to discover VCNs in compartment %s: %v\n", compartmentID, err)
+			fmt.Fprintf(os.Stderr, "  Warning: Failed to discover VCNs: %v\n", err)
 		}
 
 		// Discover subnets
+		fmt.Fprintf(os.Stderr, "  Discovering subnets...\n")
 		if subnets, err := discoverSubnets(ctx, clients, compartmentID); err == nil {
 			allResources = append(allResources, subnets...)
+			fmt.Fprintf(os.Stderr, "  Found %d subnets\n", len(subnets))
 		} else if !isRetriableError(err) {
-			fmt.Fprintf(os.Stderr, "Warning: Failed to discover subnets in compartment %s: %v\n", compartmentID, err)
+			fmt.Fprintf(os.Stderr, "  Warning: Failed to discover subnets: %v\n", err)
 		}
 
 		// Discover block volumes
+		fmt.Fprintf(os.Stderr, "  Discovering block volumes...\n")
 		if volumes, err := discoverBlockVolumes(ctx, clients, compartmentID); err == nil {
 			allResources = append(allResources, volumes...)
+			fmt.Fprintf(os.Stderr, "  Found %d block volumes\n", len(volumes))
 		} else if !isRetriableError(err) {
-			fmt.Fprintf(os.Stderr, "Warning: Failed to discover block volumes in compartment %s: %v\n", compartmentID, err)
+			fmt.Fprintf(os.Stderr, "  Warning: Failed to discover block volumes: %v\n", err)
+		}
+
+		// Discover Object Storage buckets
+		fmt.Fprintf(os.Stderr, "  Discovering Object Storage buckets...\n")
+		if buckets, err := discoverObjectStorageBuckets(ctx, clients, compartmentID); err == nil {
+			allResources = append(allResources, buckets...)
+			fmt.Fprintf(os.Stderr, "  Found %d Object Storage buckets\n", len(buckets))
+		} else if !isRetriableError(err) {
+			fmt.Fprintf(os.Stderr, "  Warning: Failed to discover Object Storage buckets: %v\n", err)
+		}
+
+		// Discover OKE clusters
+		fmt.Fprintf(os.Stderr, "  Discovering OKE clusters...\n")
+		if clusters, err := discoverOKEClusters(ctx, clients, compartmentID); err == nil {
+			allResources = append(allResources, clusters...)
+			fmt.Fprintf(os.Stderr, "  Found %d OKE clusters\n", len(clusters))
+		} else if !isRetriableError(err) {
+			fmt.Fprintf(os.Stderr, "  Warning: Failed to discover OKE clusters: %v\n", err)
+		}
+
+		// Discover Load Balancers
+		fmt.Fprintf(os.Stderr, "  Discovering Load Balancers...\n")
+		if lbs, err := discoverLoadBalancers(ctx, clients, compartmentID); err == nil {
+			allResources = append(allResources, lbs...)
+			fmt.Fprintf(os.Stderr, "  Found %d Load Balancers\n", len(lbs))
+		} else if !isRetriableError(err) {
+			fmt.Fprintf(os.Stderr, "  Warning: Failed to discover Load Balancers: %v\n", err)
+		}
+
+		// Discover Database Systems
+		fmt.Fprintf(os.Stderr, "  Discovering Database Systems...\n")
+		if dbs, err := discoverDatabases(ctx, clients, compartmentID); err == nil {
+			allResources = append(allResources, dbs...)
+			fmt.Fprintf(os.Stderr, "  Found %d Database Systems\n", len(dbs))
+		} else if !isRetriableError(err) {
+			fmt.Fprintf(os.Stderr, "  Warning: Failed to discover Database Systems: %v\n", err)
+		}
+
+		// Discover DRGs
+		fmt.Fprintf(os.Stderr, "  Discovering DRGs...\n")
+		if drgs, err := discoverDRGs(ctx, clients, compartmentID); err == nil {
+			allResources = append(allResources, drgs...)
+			fmt.Fprintf(os.Stderr, "  Found %d DRGs\n", len(drgs))
+		} else if !isRetriableError(err) {
+			fmt.Fprintf(os.Stderr, "  Warning: Failed to discover DRGs: %v\n", err)
 		}
 	}
 
+	fmt.Fprintf(os.Stderr, "Discovery completed. Total resources found: %d\n", len(allResources))
 	return allResources, nil
 }
 
@@ -320,18 +695,20 @@ func outputCSV(resources []ResourceInfo) error {
 	defer writer.Flush()
 
 	// Write header
-	header := []string{"ResourceType", "ResourceName", "OCID", "CompartmentID"}
+	header := []string{"ResourceType", "ResourceName", "OCID", "CompartmentID", "AdditionalInfo"}
 	if err := writer.Write(header); err != nil {
 		return err
 	}
 
 	// Write data
 	for _, resource := range resources {
+		additionalInfoJSON, _ := json.Marshal(resource.AdditionalInfo)
 		record := []string{
 			resource.ResourceType,
 			resource.ResourceName,
 			resource.OCID,
 			resource.CompartmentID,
+			string(additionalInfoJSON),
 		}
 		if err := writer.Write(record); err != nil {
 			return err
@@ -343,15 +720,17 @@ func outputCSV(resources []ResourceInfo) error {
 
 func outputTSV(resources []ResourceInfo) error {
 	// Write header
-	fmt.Println("ResourceType\tResourceName\tOCID\tCompartmentID")
+	fmt.Println("ResourceType\tResourceName\tOCID\tCompartmentID\tAdditionalInfo")
 
 	// Write data
 	for _, resource := range resources {
-		fmt.Printf("%s\t%s\t%s\t%s\n",
+		additionalInfoJSON, _ := json.Marshal(resource.AdditionalInfo)
+		fmt.Printf("%s\t%s\t%s\t%s\t%s\n",
 			resource.ResourceType,
 			resource.ResourceName,
 			resource.OCID,
 			resource.CompartmentID,
+			string(additionalInfoJSON),
 		)
 	}
 
