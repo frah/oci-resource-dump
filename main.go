@@ -6,8 +6,12 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"math"
+	"math/rand"
 	"os"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/oracle/oci-go-sdk/v65/common"
 	"github.com/oracle/oci-go-sdk/v65/common/auth"
@@ -21,6 +25,8 @@ import (
 
 type Config struct {
 	OutputFormat string
+	Timeout      time.Duration
+	MaxWorkers   int
 }
 
 type OCIClients struct {
@@ -148,17 +154,30 @@ func getCompartments(ctx context.Context, clients *OCIClients) ([]identity.Compa
 
 func discoverComputeInstances(ctx context.Context, clients *OCIClients, compartmentID string) ([]ResourceInfo, error) {
 	var resources []ResourceInfo
+	var allInstances []core.Instance
 
-	req := core.ListInstancesRequest{
-		CompartmentId: common.String(compartmentID),
+	// Implement pagination to get all instances
+	var page *string
+	for {
+		req := core.ListInstancesRequest{
+			CompartmentId: common.String(compartmentID),
+			Page:         page,
+		}
+
+		resp, err := clients.ComputeClient.ListInstances(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+
+		allInstances = append(allInstances, resp.Items...)
+
+		if resp.OpcNextPage == nil {
+			break
+		}
+		page = resp.OpcNextPage
 	}
 
-	resp, err := clients.ComputeClient.ListInstances(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, instance := range resp.Items {
+	for _, instance := range allInstances {
 		if instance.LifecycleState != core.InstanceLifecycleStateTerminated {
 			name := ""
 			if instance.DisplayName != nil {
@@ -214,17 +233,30 @@ func discoverComputeInstances(ctx context.Context, clients *OCIClients, compartm
 
 func discoverVCNs(ctx context.Context, clients *OCIClients, compartmentID string) ([]ResourceInfo, error) {
 	var resources []ResourceInfo
+	var allVcns []core.Vcn
 
-	req := core.ListVcnsRequest{
-		CompartmentId: common.String(compartmentID),
+	// Implement pagination to get all VCNs
+	var page *string
+	for {
+		req := core.ListVcnsRequest{
+			CompartmentId: common.String(compartmentID),
+			Page:         page,
+		}
+
+		resp, err := clients.VirtualNetworkClient.ListVcns(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+
+		allVcns = append(allVcns, resp.Items...)
+
+		if resp.OpcNextPage == nil {
+			break
+		}
+		page = resp.OpcNextPage
 	}
 
-	resp, err := clients.VirtualNetworkClient.ListVcns(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, vcn := range resp.Items {
+	for _, vcn := range allVcns {
 		if vcn.LifecycleState != core.VcnLifecycleStateTerminated {
 			name := ""
 			if vcn.DisplayName != nil {
@@ -262,17 +294,30 @@ func discoverVCNs(ctx context.Context, clients *OCIClients, compartmentID string
 
 func discoverSubnets(ctx context.Context, clients *OCIClients, compartmentID string) ([]ResourceInfo, error) {
 	var resources []ResourceInfo
+	var allSubnets []core.Subnet
 
-	req := core.ListSubnetsRequest{
-		CompartmentId: common.String(compartmentID),
+	// Implement pagination to get all subnets
+	var page *string
+	for {
+		req := core.ListSubnetsRequest{
+			CompartmentId: common.String(compartmentID),
+			Page:         page,
+		}
+
+		resp, err := clients.VirtualNetworkClient.ListSubnets(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+
+		allSubnets = append(allSubnets, resp.Items...)
+
+		if resp.OpcNextPage == nil {
+			break
+		}
+		page = resp.OpcNextPage
 	}
 
-	resp, err := clients.VirtualNetworkClient.ListSubnets(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, subnet := range resp.Items {
+	for _, subnet := range allSubnets {
 		if subnet.LifecycleState != core.SubnetLifecycleStateTerminated {
 			name := ""
 			if subnet.DisplayName != nil {
@@ -310,17 +355,30 @@ func discoverSubnets(ctx context.Context, clients *OCIClients, compartmentID str
 
 func discoverBlockVolumes(ctx context.Context, clients *OCIClients, compartmentID string) ([]ResourceInfo, error) {
 	var resources []ResourceInfo
+	var allVolumes []core.Volume
 
-	req := core.ListVolumesRequest{
-		CompartmentId: common.String(compartmentID),
+	// Implement pagination to get all block volumes
+	var page *string
+	for {
+		req := core.ListVolumesRequest{
+			CompartmentId: common.String(compartmentID),
+			Page:         page,
+		}
+
+		resp, err := clients.BlockStorageClient.ListVolumes(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+
+		allVolumes = append(allVolumes, resp.Items...)
+
+		if resp.OpcNextPage == nil {
+			break
+		}
+		page = resp.OpcNextPage
 	}
 
-	resp, err := clients.BlockStorageClient.ListVolumes(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, volume := range resp.Items {
+	for _, volume := range allVolumes {
 		if volume.LifecycleState != core.VolumeLifecycleStateTerminated {
 			name := ""
 			if volume.DisplayName != nil {
@@ -358,6 +416,7 @@ func discoverBlockVolumes(ctx context.Context, clients *OCIClients, compartmentI
 
 func discoverObjectStorageBuckets(ctx context.Context, clients *OCIClients, compartmentID string) ([]ResourceInfo, error) {
 	var resources []ResourceInfo
+	var allBuckets []objectstorage.BucketSummary
 
 	// Get namespace
 	namespaceReq := objectstorage.GetNamespaceRequest{}
@@ -366,17 +425,29 @@ func discoverObjectStorageBuckets(ctx context.Context, clients *OCIClients, comp
 		return nil, err
 	}
 
-	req := objectstorage.ListBucketsRequest{
-		CompartmentId: common.String(compartmentID),
-		NamespaceName: namespaceResp.Value,
+	// Implement pagination to get all buckets
+	var page *string
+	for {
+		req := objectstorage.ListBucketsRequest{
+			CompartmentId: common.String(compartmentID),
+			NamespaceName: namespaceResp.Value,
+			Page:         page,
+		}
+
+		resp, err := clients.ObjectStorageClient.ListBuckets(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+
+		allBuckets = append(allBuckets, resp.Items...)
+
+		if resp.OpcNextPage == nil {
+			break
+		}
+		page = resp.OpcNextPage
 	}
 
-	resp, err := clients.ObjectStorageClient.ListBuckets(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, bucket := range resp.Items {
+	for _, bucket := range allBuckets {
 		additionalInfo := make(map[string]interface{})
 		// Storage tier is not available in BucketSummary
 		
@@ -394,17 +465,30 @@ func discoverObjectStorageBuckets(ctx context.Context, clients *OCIClients, comp
 
 func discoverOKEClusters(ctx context.Context, clients *OCIClients, compartmentID string) ([]ResourceInfo, error) {
 	var resources []ResourceInfo
+	var allClusters []containerengine.ClusterSummary
 
-	req := containerengine.ListClustersRequest{
-		CompartmentId: common.String(compartmentID),
+	// Implement pagination to get all OKE clusters
+	var page *string
+	for {
+		req := containerengine.ListClustersRequest{
+			CompartmentId: common.String(compartmentID),
+			Page:         page,
+		}
+
+		resp, err := clients.ContainerEngineClient.ListClusters(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+
+		allClusters = append(allClusters, resp.Items...)
+
+		if resp.OpcNextPage == nil {
+			break
+		}
+		page = resp.OpcNextPage
 	}
 
-	resp, err := clients.ContainerEngineClient.ListClusters(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, cluster := range resp.Items {
+	for _, cluster := range allClusters {
 		if cluster.LifecycleState != containerengine.ClusterSummaryLifecycleStateDeleted {
 			name := ""
 			if cluster.Name != nil {
@@ -435,17 +519,30 @@ func discoverOKEClusters(ctx context.Context, clients *OCIClients, compartmentID
 
 func discoverLoadBalancers(ctx context.Context, clients *OCIClients, compartmentID string) ([]ResourceInfo, error) {
 	var resources []ResourceInfo
+	var allLoadBalancers []loadbalancer.LoadBalancer
 
-	req := loadbalancer.ListLoadBalancersRequest{
-		CompartmentId: common.String(compartmentID),
+	// Implement pagination to get all load balancers
+	var page *string
+	for {
+		req := loadbalancer.ListLoadBalancersRequest{
+			CompartmentId: common.String(compartmentID),
+			Page:         page,
+		}
+
+		resp, err := clients.LoadBalancerClient.ListLoadBalancers(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+
+		allLoadBalancers = append(allLoadBalancers, resp.Items...)
+
+		if resp.OpcNextPage == nil {
+			break
+		}
+		page = resp.OpcNextPage
 	}
 
-	resp, err := clients.LoadBalancerClient.ListLoadBalancers(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, lb := range resp.Items {
+	for _, lb := range allLoadBalancers {
 		if lb.LifecycleState != loadbalancer.LoadBalancerLifecycleStateDeleted {
 			name := ""
 			if lb.DisplayName != nil {
@@ -485,17 +582,30 @@ func discoverLoadBalancers(ctx context.Context, clients *OCIClients, compartment
 
 func discoverDatabases(ctx context.Context, clients *OCIClients, compartmentID string) ([]ResourceInfo, error) {
 	var resources []ResourceInfo
+	var allDbSystems []database.DbSystemSummary
 
-	req := database.ListDbSystemsRequest{
-		CompartmentId: common.String(compartmentID),
+	// Implement pagination to get all database systems
+	var page *string
+	for {
+		req := database.ListDbSystemsRequest{
+			CompartmentId: common.String(compartmentID),
+			Page:         page,
+		}
+
+		resp, err := clients.DatabaseClient.ListDbSystems(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+
+		allDbSystems = append(allDbSystems, resp.Items...)
+
+		if resp.OpcNextPage == nil {
+			break
+		}
+		page = resp.OpcNextPage
 	}
 
-	resp, err := clients.DatabaseClient.ListDbSystems(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, dbSystem := range resp.Items {
+	for _, dbSystem := range allDbSystems {
 		if dbSystem.LifecycleState != database.DbSystemSummaryLifecycleStateTerminated {
 			name := ""
 			if dbSystem.DisplayName != nil {
@@ -528,17 +638,30 @@ func discoverDatabases(ctx context.Context, clients *OCIClients, compartmentID s
 
 func discoverDRGs(ctx context.Context, clients *OCIClients, compartmentID string) ([]ResourceInfo, error) {
 	var resources []ResourceInfo
+	var allDrgs []core.Drg
 
-	req := core.ListDrgsRequest{
-		CompartmentId: common.String(compartmentID),
+	// Implement pagination to get all DRGs
+	var page *string
+	for {
+		req := core.ListDrgsRequest{
+			CompartmentId: common.String(compartmentID),
+			Page:         page,
+		}
+
+		resp, err := clients.VirtualNetworkClient.ListDrgs(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+
+		allDrgs = append(allDrgs, resp.Items...)
+
+		if resp.OpcNextPage == nil {
+			break
+		}
+		page = resp.OpcNextPage
 	}
 
-	resp, err := clients.VirtualNetworkClient.ListDrgs(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, drg := range resp.Items {
+	for _, drg := range allDrgs {
 		if drg.LifecycleState != core.DrgLifecycleStateTerminated {
 			name := ""
 			if drg.DisplayName != nil {
@@ -577,8 +700,63 @@ func isRetriableError(err error) bool {
 		   strings.Contains(errStr, "does not exist")
 }
 
+func isTransientError(err error) bool {
+	// Check if the error is transient and should be retried
+	if err == nil {
+		return false
+	}
+	
+	errStr := strings.ToLower(err.Error())
+	return strings.Contains(errStr, "timeout") ||
+		   strings.Contains(errStr, "connection reset") ||
+		   strings.Contains(errStr, "temporary failure") ||
+		   strings.Contains(errStr, "service unavailable") ||
+		   strings.Contains(errStr, "too many requests") ||
+		   strings.Contains(errStr, "rate limit") ||
+		   strings.Contains(errStr, "internal server error") ||
+		   strings.Contains(errStr, "502") ||
+		   strings.Contains(errStr, "503") ||
+		   strings.Contains(errStr, "504")
+}
+
+func withRetry(ctx context.Context, operation func() error, maxRetries int, operationName string) error {
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		err := operation()
+		if err == nil {
+			return nil
+		}
+		
+		// Don't retry if the error is not transient
+		if !isTransientError(err) {
+			return err
+		}
+		
+		if attempt == maxRetries {
+			return fmt.Errorf("operation '%s' failed after %d attempts: %w", operationName, maxRetries+1, err)
+		}
+		
+		// Exponential backoff with jitter (up to 30 seconds max)
+		backoff := time.Duration(math.Min(math.Pow(2, float64(attempt)), 30)) * time.Second
+		jitter := time.Duration(float64(backoff) * 0.1 * (2*rand.Float64() - 1))
+		sleepTime := backoff + jitter
+		if sleepTime < 0 {
+			sleepTime = backoff
+		}
+		
+		fmt.Fprintf(os.Stderr, "  Retrying %s in %v (attempt %d/%d): %v\n", operationName, sleepTime, attempt+1, maxRetries+1, err)
+		
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(sleepTime):
+		}
+	}
+	return nil
+}
+
 func discoverAllResources(ctx context.Context, clients *OCIClients) ([]ResourceInfo, error) {
 	var allResources []ResourceInfo
+	var resourcesMutex sync.Mutex
 
 	// Get all compartments
 	fmt.Fprintf(os.Stderr, "Getting compartments...\n")
@@ -588,97 +766,128 @@ func discoverAllResources(ctx context.Context, clients *OCIClients) ([]ResourceI
 	}
 	fmt.Fprintf(os.Stderr, "Found %d compartments\n", len(compartments))
 
-	// Discover resources in each compartment
+	// Create a worker pool for parallel compartment processing
+	maxWorkers := 5  // Reasonable limit to avoid API rate limiting
+	semaphore := make(chan struct{}, maxWorkers)
+	var wg sync.WaitGroup
+
+	// Discover resources in each compartment concurrently
 	for i, compartment := range compartments {
-		compartmentID := *compartment.Id
-		compartmentName := "root"
-		if compartment.Name != nil {
-			compartmentName = *compartment.Name
-		}
-		
-		fmt.Fprintf(os.Stderr, "Processing compartment %d/%d: %s\n", i+1, len(compartments), compartmentName)
+		wg.Add(1)
+		go func(idx int, comp identity.Compartment) {
+			defer wg.Done()
+			
+			// Acquire semaphore
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
+			
+			compartmentID := *comp.Id
+			compartmentName := "root"
+			if comp.Name != nil {
+				compartmentName = *comp.Name
+			}
+			
+			fmt.Fprintf(os.Stderr, "Processing compartment %d/%d: %s\n", idx+1, len(compartments), compartmentName)
 
-		// Discover compute instances
-		fmt.Fprintf(os.Stderr, "  Discovering compute instances...\n")
-		if instances, err := discoverComputeInstances(ctx, clients, compartmentID); err == nil {
-			allResources = append(allResources, instances...)
-			fmt.Fprintf(os.Stderr, "  Found %d compute instances\n", len(instances))
-		} else if !isRetriableError(err) {
-			fmt.Fprintf(os.Stderr, "  Warning: Failed to discover compute instances: %v\n", err)
-		}
+			var compartmentResources []ResourceInfo
+			
+			// Discover compute instances with retry
+			fmt.Fprintf(os.Stderr, "  Discovering compute instances...\n")
+			var instances []ResourceInfo
+			err := withRetry(ctx, func() error {
+				var retryErr error
+				instances, retryErr = discoverComputeInstances(ctx, clients, compartmentID)
+				return retryErr
+			}, 3, "compute instances discovery")
+			
+			if err == nil {
+				compartmentResources = append(compartmentResources, instances...)
+				fmt.Fprintf(os.Stderr, "  Found %d compute instances\n", len(instances))
+			} else if !isRetriableError(err) {
+				fmt.Fprintf(os.Stderr, "  Warning: Failed to discover compute instances: %v\n", err)
+			}
 
-		// Discover VCNs
-		fmt.Fprintf(os.Stderr, "  Discovering VCNs...\n")
-		if vcns, err := discoverVCNs(ctx, clients, compartmentID); err == nil {
-			allResources = append(allResources, vcns...)
-			fmt.Fprintf(os.Stderr, "  Found %d VCNs\n", len(vcns))
-		} else if !isRetriableError(err) {
-			fmt.Fprintf(os.Stderr, "  Warning: Failed to discover VCNs: %v\n", err)
-		}
+			// Discover VCNs
+			fmt.Fprintf(os.Stderr, "  Discovering VCNs...\n")
+			if vcns, err := discoverVCNs(ctx, clients, compartmentID); err == nil {
+				compartmentResources = append(compartmentResources, vcns...)
+				fmt.Fprintf(os.Stderr, "  Found %d VCNs\n", len(vcns))
+			} else if !isRetriableError(err) {
+				fmt.Fprintf(os.Stderr, "  Warning: Failed to discover VCNs: %v\n", err)
+			}
 
-		// Discover subnets
-		fmt.Fprintf(os.Stderr, "  Discovering subnets...\n")
-		if subnets, err := discoverSubnets(ctx, clients, compartmentID); err == nil {
-			allResources = append(allResources, subnets...)
-			fmt.Fprintf(os.Stderr, "  Found %d subnets\n", len(subnets))
-		} else if !isRetriableError(err) {
-			fmt.Fprintf(os.Stderr, "  Warning: Failed to discover subnets: %v\n", err)
-		}
+			// Discover subnets
+			fmt.Fprintf(os.Stderr, "  Discovering subnets...\n")
+			if subnets, err := discoverSubnets(ctx, clients, compartmentID); err == nil {
+				compartmentResources = append(compartmentResources, subnets...)
+				fmt.Fprintf(os.Stderr, "  Found %d subnets\n", len(subnets))
+			} else if !isRetriableError(err) {
+				fmt.Fprintf(os.Stderr, "  Warning: Failed to discover subnets: %v\n", err)
+			}
 
-		// Discover block volumes
-		fmt.Fprintf(os.Stderr, "  Discovering block volumes...\n")
-		if volumes, err := discoverBlockVolumes(ctx, clients, compartmentID); err == nil {
-			allResources = append(allResources, volumes...)
-			fmt.Fprintf(os.Stderr, "  Found %d block volumes\n", len(volumes))
-		} else if !isRetriableError(err) {
-			fmt.Fprintf(os.Stderr, "  Warning: Failed to discover block volumes: %v\n", err)
-		}
+			// Discover block volumes
+			fmt.Fprintf(os.Stderr, "  Discovering block volumes...\n")
+			if volumes, err := discoverBlockVolumes(ctx, clients, compartmentID); err == nil {
+				compartmentResources = append(compartmentResources, volumes...)
+				fmt.Fprintf(os.Stderr, "  Found %d block volumes\n", len(volumes))
+			} else if !isRetriableError(err) {
+				fmt.Fprintf(os.Stderr, "  Warning: Failed to discover block volumes: %v\n", err)
+			}
 
-		// Discover Object Storage buckets
-		fmt.Fprintf(os.Stderr, "  Discovering Object Storage buckets...\n")
-		if buckets, err := discoverObjectStorageBuckets(ctx, clients, compartmentID); err == nil {
-			allResources = append(allResources, buckets...)
-			fmt.Fprintf(os.Stderr, "  Found %d Object Storage buckets\n", len(buckets))
-		} else if !isRetriableError(err) {
-			fmt.Fprintf(os.Stderr, "  Warning: Failed to discover Object Storage buckets: %v\n", err)
-		}
+			// Discover Object Storage buckets
+			fmt.Fprintf(os.Stderr, "  Discovering Object Storage buckets...\n")
+			if buckets, err := discoverObjectStorageBuckets(ctx, clients, compartmentID); err == nil {
+				compartmentResources = append(compartmentResources, buckets...)
+				fmt.Fprintf(os.Stderr, "  Found %d Object Storage buckets\n", len(buckets))
+			} else if !isRetriableError(err) {
+				fmt.Fprintf(os.Stderr, "  Warning: Failed to discover Object Storage buckets: %v\n", err)
+			}
 
-		// Discover OKE clusters
-		fmt.Fprintf(os.Stderr, "  Discovering OKE clusters...\n")
-		if clusters, err := discoverOKEClusters(ctx, clients, compartmentID); err == nil {
-			allResources = append(allResources, clusters...)
-			fmt.Fprintf(os.Stderr, "  Found %d OKE clusters\n", len(clusters))
-		} else if !isRetriableError(err) {
-			fmt.Fprintf(os.Stderr, "  Warning: Failed to discover OKE clusters: %v\n", err)
-		}
+			// Discover OKE clusters
+			fmt.Fprintf(os.Stderr, "  Discovering OKE clusters...\n")
+			if clusters, err := discoverOKEClusters(ctx, clients, compartmentID); err == nil {
+				compartmentResources = append(compartmentResources, clusters...)
+				fmt.Fprintf(os.Stderr, "  Found %d OKE clusters\n", len(clusters))
+			} else if !isRetriableError(err) {
+				fmt.Fprintf(os.Stderr, "  Warning: Failed to discover OKE clusters: %v\n", err)
+			}
 
-		// Discover Load Balancers
-		fmt.Fprintf(os.Stderr, "  Discovering Load Balancers...\n")
-		if lbs, err := discoverLoadBalancers(ctx, clients, compartmentID); err == nil {
-			allResources = append(allResources, lbs...)
-			fmt.Fprintf(os.Stderr, "  Found %d Load Balancers\n", len(lbs))
-		} else if !isRetriableError(err) {
-			fmt.Fprintf(os.Stderr, "  Warning: Failed to discover Load Balancers: %v\n", err)
-		}
+			// Discover Load Balancers
+			fmt.Fprintf(os.Stderr, "  Discovering Load Balancers...\n")
+			if lbs, err := discoverLoadBalancers(ctx, clients, compartmentID); err == nil {
+				compartmentResources = append(compartmentResources, lbs...)
+				fmt.Fprintf(os.Stderr, "  Found %d Load Balancers\n", len(lbs))
+			} else if !isRetriableError(err) {
+				fmt.Fprintf(os.Stderr, "  Warning: Failed to discover Load Balancers: %v\n", err)
+			}
 
-		// Discover Database Systems
-		fmt.Fprintf(os.Stderr, "  Discovering Database Systems...\n")
-		if dbs, err := discoverDatabases(ctx, clients, compartmentID); err == nil {
-			allResources = append(allResources, dbs...)
-			fmt.Fprintf(os.Stderr, "  Found %d Database Systems\n", len(dbs))
-		} else if !isRetriableError(err) {
-			fmt.Fprintf(os.Stderr, "  Warning: Failed to discover Database Systems: %v\n", err)
-		}
+			// Discover Database Systems
+			fmt.Fprintf(os.Stderr, "  Discovering Database Systems...\n")
+			if dbs, err := discoverDatabases(ctx, clients, compartmentID); err == nil {
+				compartmentResources = append(compartmentResources, dbs...)
+				fmt.Fprintf(os.Stderr, "  Found %d Database Systems\n", len(dbs))
+			} else if !isRetriableError(err) {
+				fmt.Fprintf(os.Stderr, "  Warning: Failed to discover Database Systems: %v\n", err)
+			}
 
-		// Discover DRGs
-		fmt.Fprintf(os.Stderr, "  Discovering DRGs...\n")
-		if drgs, err := discoverDRGs(ctx, clients, compartmentID); err == nil {
-			allResources = append(allResources, drgs...)
-			fmt.Fprintf(os.Stderr, "  Found %d DRGs\n", len(drgs))
-		} else if !isRetriableError(err) {
-			fmt.Fprintf(os.Stderr, "  Warning: Failed to discover DRGs: %v\n", err)
-		}
+			// Discover DRGs
+			fmt.Fprintf(os.Stderr, "  Discovering DRGs...\n")
+			if drgs, err := discoverDRGs(ctx, clients, compartmentID); err == nil {
+				compartmentResources = append(compartmentResources, drgs...)
+				fmt.Fprintf(os.Stderr, "  Found %d DRGs\n", len(drgs))
+			} else if !isRetriableError(err) {
+				fmt.Fprintf(os.Stderr, "  Warning: Failed to discover DRGs: %v\n", err)
+			}
+			
+			// Thread-safe append to allResources
+			resourcesMutex.Lock()
+			allResources = append(allResources, compartmentResources...)
+			resourcesMutex.Unlock()
+		}(i, compartment)
 	}
+	
+	// Wait for all goroutines to complete
+	wg.Wait()
 
 	fmt.Fprintf(os.Stderr, "Discovery completed. Total resources found: %d\n", len(allResources))
 	return allResources, nil
@@ -752,10 +961,16 @@ func outputResources(resources []ResourceInfo, format string) error {
 
 func main() {
 	config := &Config{}
+	var timeoutMinutes int
 	
 	flag.StringVar(&config.OutputFormat, "format", "json", "Output format: csv, tsv, or json")
 	flag.StringVar(&config.OutputFormat, "f", "json", "Output format: csv, tsv, or json (shorthand)")
+	flag.IntVar(&timeoutMinutes, "timeout", 30, "Timeout in minutes for the entire operation")
+	flag.IntVar(&timeoutMinutes, "t", 30, "Timeout in minutes for the entire operation (shorthand)")
 	flag.Parse()
+
+	// Set timeout duration
+	config.Timeout = time.Duration(timeoutMinutes) * time.Minute
 
 	// Validate output format
 	validFormats := []string{"csv", "tsv", "json"}
@@ -782,8 +997,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), config.Timeout)
+	defer cancel()
+
 	// Discover all resources
-	ctx := context.Background()
+	fmt.Fprintf(os.Stderr, "Starting resource discovery with %v timeout...\n", config.Timeout)
 	resources, err := discoverAllResources(ctx, clients)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error discovering resources: %v\n", err)
