@@ -26,6 +26,7 @@ type Config struct {
 	Logger          *Logger
 	ShowProgress    bool
 	ProgressTracker *ProgressTracker
+	Filters         FilterConfig
 }
 
 // OCIClients holds all OCI service clients

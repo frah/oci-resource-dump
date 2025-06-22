@@ -9,11 +9,12 @@ import (
 )
 
 // AppConfig represents the YAML configuration structure
-// Phase 2A: Basic configuration for existing features only
+// Phase 2B: Basic configuration with filtering support
 type AppConfig struct {
 	Version string        `yaml:"version"`
 	General GeneralConfig `yaml:"general"`
 	Output  OutputConfig  `yaml:"output"`
+	Filters FilterConfig  `yaml:"filters"`
 }
 
 // GeneralConfig holds general execution settings
@@ -41,6 +42,14 @@ func getDefaultConfig() *AppConfig {
 		},
 		Output: OutputConfig{
 			File: "", // stdout by default
+		},
+		Filters: FilterConfig{
+			IncludeCompartments:  []string{},
+			ExcludeCompartments:  []string{},
+			IncludeResourceTypes: []string{},
+			ExcludeResourceTypes: []string{},
+			NamePattern:          "",
+			ExcludeNamePattern:   "",
 		},
 	}
 }

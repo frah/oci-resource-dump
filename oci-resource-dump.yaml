@@ -1,8 +1,15 @@
 version: "1.0"
 general:
-    timeout: 10
-    log_level: debug
+    timeout: 300
+    log_level: normal
     output_format: json
     progress: true
 output:
-    file: "/tmp/test-config-output.json"
+    file: ""
+filters:
+    include_compartments: []
+    exclude_compartments: []
+    include_resource_types: []
+    exclude_resource_types: []
+    name_pattern: ""
+    exclude_name_pattern: ""
