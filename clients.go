@@ -19,8 +19,15 @@ import (
 	"github.com/oracle/oci-go-sdk/v65/streaming"
 )
 
-// initOCIClients initializes all required OCI service clients
-func initOCIClients() (*OCIClients, error) {
+// initOCIClients initializes all required OCI service clients with context support
+func initOCIClients(ctx context.Context) (*OCIClients, error) {
+	// Check if context is already cancelled
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+	
 	// Use instance principal authentication
 	configProvider, err := auth.InstancePrincipalConfigurationProvider()
 	if err != nil {
@@ -35,6 +42,13 @@ func initOCIClients() (*OCIClients, error) {
 		return nil, fmt.Errorf("failed to create compute client: %w", err)
 	}
 	clients.ComputeClient = computeClient
+	
+	// Check context before continuing
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
 	
 	// Initialize VirtualNetwork client
 	vnClient, err := core.NewVirtualNetworkClientWithConfigurationProvider(configProvider)
@@ -56,6 +70,13 @@ func initOCIClients() (*OCIClients, error) {
 		return nil, fmt.Errorf("failed to create identity client: %w", err)
 	}
 	clients.IdentityClient = identityClient
+	
+	// Check context before continuing
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
 
 	// Initialize Object Storage client
 	osClient, err := objectstorage.NewObjectStorageClientWithConfigurationProvider(configProvider)
@@ -84,6 +105,13 @@ func initOCIClients() (*OCIClients, error) {
 		return nil, fmt.Errorf("failed to create database client: %w", err)
 	}
 	clients.DatabaseClient = dbClient
+
+	// Check context before continuing
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
 
 	// Initialize API Gateway client
 	apiGatewayClient, err := apigateway.NewGatewayClientWithConfigurationProvider(configProvider)
@@ -119,6 +147,13 @@ func initOCIClients() (*OCIClients, error) {
 		return nil, fmt.Errorf("failed to create streaming client: %w", err)
 	}
 	clients.StreamingClient = streamingClient
+
+	// Final context check
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
 
 	return clients, nil
 }

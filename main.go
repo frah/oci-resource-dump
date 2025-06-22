@@ -36,15 +36,15 @@ var logger *Logger
 
 func main() {
 	config := &Config{}
-	var timeoutMinutes int
+	var timeoutSeconds int
 	var logLevelStr string
 	var showProgress bool
 	var noProgress bool
 	
 	flag.StringVar(&config.OutputFormat, "format", "json", "Output format: csv, tsv, or json")
 	flag.StringVar(&config.OutputFormat, "f", "json", "Output format: csv, tsv, or json (shorthand)")
-	flag.IntVar(&timeoutMinutes, "timeout", 30, "Timeout in minutes for the entire operation")
-	flag.IntVar(&timeoutMinutes, "t", 30, "Timeout in minutes for the entire operation (shorthand)")
+	flag.IntVar(&timeoutSeconds, "timeout", 300, "Timeout in seconds for the entire operation")
+	flag.IntVar(&timeoutSeconds, "t", 300, "Timeout in seconds for the entire operation (shorthand)")
 	flag.StringVar(&logLevelStr, "log-level", "normal", "Log level: silent, normal, verbose, debug")
 	flag.StringVar(&logLevelStr, "l", "normal", "Log level: silent, normal, verbose, debug (shorthand)")
 	flag.BoolVar(&showProgress, "progress", false, "Show progress bar with real-time statistics")
@@ -52,7 +52,7 @@ func main() {
 	flag.Parse()
 
 	// Set timeout duration
-	config.Timeout = time.Duration(timeoutMinutes) * time.Minute
+	config.Timeout = time.Duration(timeoutSeconds) * time.Second
 	
 	// Parse and validate log level
 	logLevel, err := ParseLogLevel(logLevelStr)
@@ -91,18 +91,18 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), config.Timeout)
+	defer cancel()
+
 	// Initialize OCI clients
 	logger.Debug("Initializing OCI clients with instance principal authentication")
-	clients, err := initOCIClients()
+	clients, err := initOCIClients(ctx)
 	if err != nil {
 		logger.Error("Error initializing OCI clients: %v", err)
 		os.Exit(1)
 	}
 	logger.Verbose("OCI clients initialized successfully")
-
-	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), config.Timeout)
-	defer cancel()
 
 	// Discover all resources
 	logger.Info("Starting resource discovery with %v timeout...", config.Timeout)
