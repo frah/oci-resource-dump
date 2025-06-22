@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/csv"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -34,72 +32,7 @@ var logger *Logger
 
 
 
-// Discovery functions moved to discovery.go
-func outputJSON(resources []ResourceInfo) error {
-	encoder := json.NewEncoder(os.Stdout)
-	encoder.SetIndent("", "  ")
-	return encoder.Encode(resources)
-}
-
-func outputCSV(resources []ResourceInfo) error {
-	writer := csv.NewWriter(os.Stdout)
-	defer writer.Flush()
-
-	// Write header
-	header := []string{"ResourceType", "ResourceName", "OCID", "CompartmentID", "AdditionalInfo"}
-	if err := writer.Write(header); err != nil {
-		return err
-	}
-
-	// Write data
-	for _, resource := range resources {
-		additionalInfoJSON, _ := json.Marshal(resource.AdditionalInfo)
-		record := []string{
-			resource.ResourceType,
-			resource.ResourceName,
-			resource.OCID,
-			resource.CompartmentID,
-			string(additionalInfoJSON),
-		}
-		if err := writer.Write(record); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-func outputTSV(resources []ResourceInfo) error {
-	// Write header
-	fmt.Println("ResourceType\tResourceName\tOCID\tCompartmentID\tAdditionalInfo")
-
-	// Write data
-	for _, resource := range resources {
-		additionalInfoJSON, _ := json.Marshal(resource.AdditionalInfo)
-		fmt.Printf("%s\t%s\t%s\t%s\t%s\n",
-			resource.ResourceType,
-			resource.ResourceName,
-			resource.OCID,
-			resource.CompartmentID,
-			string(additionalInfoJSON),
-		)
-	}
-
-	return nil
-}
-
-func outputResources(resources []ResourceInfo, format string) error {
-	switch format {
-	case "json":
-		return outputJSON(resources)
-	case "csv":
-		return outputCSV(resources)
-	case "tsv":
-		return outputTSV(resources)
-	default:
-		return fmt.Errorf("unsupported output format: %s", format)
-	}
-}
+// Output functions moved to output.go
 
 func main() {
 	config := &Config{}
