@@ -35,27 +35,76 @@ var logger *Logger
 // Output functions moved to output.go
 
 func main() {
-	config := &Config{}
-	var timeoutSeconds int
-	var logLevelStr string
-	var showProgress bool
-	var noProgress bool
-	
-	flag.StringVar(&config.OutputFormat, "format", "json", "Output format: csv, tsv, or json")
-	flag.StringVar(&config.OutputFormat, "f", "json", "Output format: csv, tsv, or json (shorthand)")
-	flag.IntVar(&timeoutSeconds, "timeout", 300, "Timeout in seconds for the entire operation")
-	flag.IntVar(&timeoutSeconds, "t", 300, "Timeout in seconds for the entire operation (shorthand)")
-	flag.StringVar(&logLevelStr, "log-level", "normal", "Log level: silent, normal, verbose, debug")
-	flag.StringVar(&logLevelStr, "l", "normal", "Log level: silent, normal, verbose, debug (shorthand)")
-	flag.BoolVar(&showProgress, "progress", false, "Show progress bar with real-time statistics")
-	flag.BoolVar(&noProgress, "no-progress", false, "Disable progress bar (default behavior)")
+	// CLI argument variables
+	var timeoutSeconds *int = flag.Int("timeout", 0, "Timeout in seconds for the entire operation")
+	var timeoutShort *int = flag.Int("t", 0, "Timeout in seconds for the entire operation (shorthand)")
+	var logLevelStr *string = flag.String("log-level", "", "Log level: silent, normal, verbose, debug")
+	var logLevelShort *string = flag.String("l", "", "Log level: silent, normal, verbose, debug (shorthand)")
+	var outputFormat *string = flag.String("format", "", "Output format: csv, tsv, or json")
+	var outputFormatShort *string = flag.String("f", "", "Output format: csv, tsv, or json (shorthand)")
+	var showProgress *bool = flag.Bool("progress", false, "Show progress bar with real-time statistics")
+	var noProgress *bool = flag.Bool("no-progress", false, "Disable progress bar (default behavior)")
+	var outputFile *string = flag.String("output-file", "", "Output file path (default: stdout)")
+	var outputFileShort *string = flag.String("o", "", "Output file path (default: stdout, shorthand)")
+	var generateConfig *bool = flag.Bool("generate-config", false, "Generate default configuration file")
 	flag.Parse()
 
-	// Set timeout duration
-	config.Timeout = time.Duration(timeoutSeconds) * time.Second
+	// Handle configuration file generation
+	if *generateConfig {
+		if err := GenerateDefaultConfigFile("oci-resource-dump.yaml"); err != nil {
+			fmt.Fprintf(os.Stderr, "Error generating configuration file: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("Default configuration file generated: oci-resource-dump.yaml")
+		return
+	}
+
+	// Initialize temporary logger for configuration loading
+	logger = NewLogger(LogLevelNormal)
+	
+	// Load configuration from file
+	appConfig, err := LoadConfig()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading configuration: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Resolve CLI argument priorities (shorthand overrides long form)
+	finalTimeout := timeoutSeconds
+	if *timeoutShort != 0 {
+		finalTimeout = timeoutShort
+	}
+	
+	finalLogLevel := logLevelStr
+	if *logLevelShort != "" {
+		finalLogLevel = logLevelShort
+	}
+	
+	finalFormat := outputFormat
+	if *outputFormatShort != "" {
+		finalFormat = outputFormatShort
+	}
+	
+	finalOutputFile := outputFile
+	if *outputFileShort != "" {
+		finalOutputFile = outputFileShort
+	}
+	
+	finalProgress := showProgress
+	if *noProgress {
+		finalProgress = func() *bool { b := false; return &b }() // no-progress overrides progress
+	}
+
+	// Merge CLI arguments with configuration file (CLI has higher priority)
+	MergeWithCLIArgs(appConfig, finalTimeout, finalLogLevel, finalFormat, finalProgress, finalOutputFile)
+
+	// Convert AppConfig to runtime Config
+	config := &Config{}
+	config.Timeout = time.Duration(appConfig.General.Timeout) * time.Second
+	config.OutputFormat = strings.ToLower(appConfig.General.OutputFormat)
 	
 	// Parse and validate log level
-	logLevel, err := ParseLogLevel(logLevelStr)
+	logLevel, err := ParseLogLevel(appConfig.General.LogLevel)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		flag.Usage()
@@ -63,10 +112,10 @@ func main() {
 	}
 	config.LogLevel = logLevel
 	
-	// Configure progress bar - default to enabled unless explicitly disabled or silent mode
-	config.ShowProgress = showProgress || (!noProgress && logLevel != LogLevelSilent)
+	// Configure progress bar - from config file or CLI
+	config.ShowProgress = appConfig.General.Progress
 	
-	// Initialize global logger
+	// Re-initialize logger with final log level
 	logger = NewLogger(logLevel)
 	config.Logger = logger
 	
@@ -115,9 +164,20 @@ func main() {
 
 	// Output resources in the specified format
 	logger.Debug("Outputting %d resources in %s format", len(resources), config.OutputFormat)
-	if err := outputResources(resources, config.OutputFormat); err != nil {
-		logger.Error("Error outputting resources: %v", err)
-		os.Exit(1)
+	
+	// Handle file output vs stdout
+	if appConfig.Output.File != "" {
+		logger.Info("Writing output to file: %s", appConfig.Output.File)
+		if err := outputResourcesToFile(resources, config.OutputFormat, appConfig.Output.File); err != nil {
+			logger.Error("Error outputting resources to file: %v", err)
+			os.Exit(1)
+		}
+		logger.Verbose("Resource output completed successfully to file: %s", appConfig.Output.File)
+	} else {
+		if err := outputResources(resources, config.OutputFormat); err != nil {
+			logger.Error("Error outputting resources: %v", err)
+			os.Exit(1)
+		}
+		logger.Verbose("Resource output completed successfully to stdout")
 	}
-	logger.Verbose("Resource output completed successfully")
 }

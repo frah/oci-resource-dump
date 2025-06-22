@@ -1,0 +1,36 @@
+# oci-resource-dump.yaml
+# Configuration file for OCI Resource Dump CLI Tool
+# Phase 2A: Basic configuration (existing features only)
+
+version: "1.0"
+
+# General execution settings (maps to existing CLI arguments)
+general:
+  # Timeout for the entire operation in seconds (--timeout, -t)
+  timeout: 300
+  
+  # Log level: silent, normal, verbose, debug (--log-level, -l) 
+  log_level: "normal"
+  
+  # Output format: json, csv, tsv (--format, -f)
+  output_format: "json"
+  
+  # Progress bar display control (--progress, --no-progress)
+  progress: true
+
+# Output configuration
+output:
+  # Output file path (empty string = stdout)
+  file: ""
+  
+# Future features (Phase 2B+) - commented out for Phase 2A
+# filters:
+#   include_compartments: []     # Phase 2B: Compartment filtering
+#   exclude_compartments: []
+#   include_resource_types: []   # Phase 2B: Resource type filtering  
+#   exclude_resource_types: []
+#   name_pattern: ""            # Phase 2B: Name pattern filtering
+
+# diff:
+#   enabled: false              # Phase 2C: Diff analysis
+#   format: "text"             # Phase 2C: Diff output format
