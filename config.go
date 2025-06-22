@@ -9,12 +9,13 @@ import (
 )
 
 // AppConfig represents the YAML configuration structure
-// Phase 2B: Basic configuration with filtering support
+// Phase 2C: Configuration with filtering and diff support
 type AppConfig struct {
 	Version string        `yaml:"version"`
 	General GeneralConfig `yaml:"general"`
 	Output  OutputConfig  `yaml:"output"`
 	Filters FilterConfig  `yaml:"filters"`
+	Diff    DiffConfig    `yaml:"diff"`
 }
 
 // GeneralConfig holds general execution settings
@@ -50,6 +51,11 @@ func getDefaultConfig() *AppConfig {
 			ExcludeResourceTypes: []string{},
 			NamePattern:          "",
 			ExcludeNamePattern:   "",
+		},
+		Diff: DiffConfig{
+			Format:     "json",
+			Detailed:   false,
+			OutputFile: "",
 		},
 	}
 }

@@ -13,3 +13,7 @@ filters:
     exclude_resource_types: []
     name_pattern: ""
     exclude_name_pattern: ""
+diff:
+    format: json
+    detailed: false
+    output_file: ""

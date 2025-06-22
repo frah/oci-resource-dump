@@ -56,6 +56,12 @@ func main() {
 	var nameFilter *string = flag.String("name-filter", "", "Regex pattern for resource names to include")
 	var excludeNameFilter *string = flag.String("exclude-name-filter", "", "Regex pattern for resource names to exclude")
 	
+	// Phase 2C: Diff analysis CLI arguments
+	var compareFiles *string = flag.String("compare-files", "", "Comma-separated pair of JSON files to compare (old,new)")
+	var diffOutput *string = flag.String("diff-output", "", "Output file for diff analysis (default: stdout)")
+	var diffFormat *string = flag.String("diff-format", "json", "Diff output format: json, text")
+	var diffDetailed *bool = flag.Bool("diff-detailed", false, "Include unchanged resources in diff output")
+	
 	flag.Parse()
 
 	// Handle configuration file generation
@@ -65,6 +71,44 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Println("Default configuration file generated: oci-resource-dump.yaml")
+		return
+	}
+	
+	// Phase 2C: Handle diff analysis mode
+	if *compareFiles != "" {
+		// Initialize logger for diff mode
+		logger = NewLogger(LogLevelNormal)
+		
+		files := strings.Split(*compareFiles, ",")
+		if len(files) != 2 {
+			fmt.Fprintf(os.Stderr, "Error: --compare-files requires exactly 2 files separated by comma\n")
+			fmt.Fprintf(os.Stderr, "Example: --compare-files old.json,new.json\n")
+			os.Exit(1)
+		}
+		
+		oldFile := strings.TrimSpace(files[0])
+		newFile := strings.TrimSpace(files[1])
+		
+		// Configure diff settings
+		diffConfig := DiffConfig{
+			Format:     *diffFormat,
+			Detailed:   *diffDetailed,
+			OutputFile: *diffOutput,
+		}
+		
+		// Perform diff analysis
+		result, err := CompareDumps(oldFile, newFile, diffConfig)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error performing diff analysis: %v\n", err)
+			os.Exit(1)
+		}
+		
+		// Output results
+		if err := OutputDiffResult(result, diffConfig); err != nil {
+			fmt.Fprintf(os.Stderr, "Error outputting diff results: %v\n", err)
+			os.Exit(1)
+		}
+		
 		return
 	}
 
