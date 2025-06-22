@@ -6,8 +6,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
-	"log"
 	"math"
 	"math/rand"
 	"os"
@@ -17,7 +15,6 @@ import (
 	"time"
 
 	"github.com/oracle/oci-go-sdk/v65/common"
-	"github.com/oracle/oci-go-sdk/v65/common/auth"
 	"github.com/oracle/oci-go-sdk/v65/apigateway"
 	"github.com/oracle/oci-go-sdk/v65/containerengine"
 	"github.com/oracle/oci-go-sdk/v65/core"
@@ -31,158 +28,12 @@ import (
 	"github.com/oracle/oci-go-sdk/v65/streaming"
 )
 
-// LogLevel represents the logging verbosity level
-type LogLevel int
-
-const (
-	LogLevelSilent LogLevel = iota // Only errors
-	LogLevelNormal                 // Basic progress info (default)
-	LogLevelVerbose                // Detailed operational info
-	LogLevelDebug                  // Full diagnostic info
-)
-
-// String returns the string representation of the log level
-func (l LogLevel) String() string {
-	switch l {
-	case LogLevelSilent:
-		return "silent"
-	case LogLevelNormal:
-		return "normal"
-	case LogLevelVerbose:
-		return "verbose"
-	case LogLevelDebug:
-		return "debug"
-	default:
-		return "unknown"
-	}
-}
-
-// ParseLogLevel parses a string into a LogLevel
-func ParseLogLevel(s string) (LogLevel, error) {
-	switch strings.ToLower(s) {
-	case "silent":
-		return LogLevelSilent, nil
-	case "normal":
-		return LogLevelNormal, nil
-	case "verbose":
-		return LogLevelVerbose, nil
-	case "debug":
-		return LogLevelDebug, nil
-	default:
-		return LogLevelNormal, fmt.Errorf("invalid log level: %s (valid: silent, normal, verbose, debug)", s)
-	}
-}
-
-// Logger provides structured logging with multiple levels
-type Logger struct {
-	level    LogLevel
-	errorLog *log.Logger
-	infoLog  *log.Logger
-	debugLog *log.Logger
-	mu       sync.RWMutex
-}
-
-// NewLogger creates a new logger with the specified level
-func NewLogger(level LogLevel) *Logger {
-	logger := &Logger{
-		level: level,
-	}
-	
-	// Always create error logger (goes to stderr)
-	logger.errorLog = log.New(os.Stderr, "ERROR: ", log.LstdFlags)
-	
-	// Create info logger based on level (goes to stderr for progress info)
-	if level >= LogLevelNormal {
-		logger.infoLog = log.New(os.Stderr, "", log.LstdFlags)
-	} else {
-		logger.infoLog = log.New(io.Discard, "", 0)
-	}
-	
-	// Create debug logger based on level
-	if level >= LogLevelDebug {
-		logger.debugLog = log.New(os.Stderr, "DEBUG: ", log.LstdFlags|log.Lshortfile)
-	} else {
-		logger.debugLog = log.New(io.Discard, "", 0)
-	}
-	
-	return logger
-}
-
-// Error logs error messages (always visible except in silent mode)
-func (l *Logger) Error(format string, args ...interface{}) {
-	l.mu.RLock()
-	defer l.mu.RUnlock()
-	l.errorLog.Printf(format, args...)
-}
-
-// Info logs informational messages (visible in normal, verbose, debug)
-func (l *Logger) Info(format string, args ...interface{}) {
-	l.mu.RLock()
-	defer l.mu.RUnlock()
-	if l.level >= LogLevelNormal {
-		l.infoLog.Printf(format, args...)
-	}
-}
-
-// Verbose logs detailed operational messages (visible in verbose, debug)
-func (l *Logger) Verbose(format string, args ...interface{}) {
-	l.mu.RLock()
-	defer l.mu.RUnlock()
-	if l.level >= LogLevelVerbose {
-		l.infoLog.Printf("VERBOSE: "+format, args...)
-	}
-}
-
-// Debug logs debug messages (visible only in debug mode)
-func (l *Logger) Debug(format string, args ...interface{}) {
-	l.mu.RLock()
-	defer l.mu.RUnlock()
-	if l.level >= LogLevelDebug {
-		l.debugLog.Printf(format, args...)
-	}
-}
-
-// SetLevel updates the logging level dynamically
-func (l *Logger) SetLevel(level LogLevel) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.level = level
-	
-	// Recreate loggers based on new level
-	if level >= LogLevelNormal {
-		l.infoLog = log.New(os.Stderr, "", log.LstdFlags)
-	} else {
-		l.infoLog = log.New(io.Discard, "", 0)
-	}
-	
-	if level >= LogLevelDebug {
-		l.debugLog = log.New(os.Stderr, "DEBUG: ", log.LstdFlags|log.Lshortfile)
-	} else {
-		l.debugLog = log.New(io.Discard, "", 0)
-	}
-}
-
-// GetLevel returns the current log level
-func (l *Logger) GetLevel() LogLevel {
-	l.mu.RLock()
-	defer l.mu.RUnlock()
-	return l.level
-}
 
 
 
 
 
 
-type Config struct {
-	OutputFormat        string
-	Timeout             time.Duration
-	MaxWorkers          int
-	LogLevel            LogLevel
-	Logger              *Logger
-	ShowProgress        bool
-	ProgressTracker     *ProgressTracker
-}
 
 // Global logger instance
 var logger *Logger
@@ -190,37 +41,6 @@ var logger *Logger
 
 
 
-// ProgressTracker provides thread-safe progress tracking with ETA calculation
-type ProgressTracker struct {
-	mu                    sync.RWMutex
-	startTime            time.Time
-	lastUpdateTime       time.Time
-	totalCompartments    int64
-	processedCompartments int64
-	totalResourceTypes   int64
-	processedResourceTypes int64
-	totalResources       int64
-	errorCount          int64
-	retryCount          int64
-	currentOperation     string
-	currentCompartment   string
-	enabled             bool
-	speedSamples        []float64
-	maxSamples          int
-	refreshInterval     time.Duration
-	done                chan struct{}
-	updateChannel       chan ProgressUpdate
-}
-
-// ProgressUpdate represents a progress update from worker goroutines
-type ProgressUpdate struct {
-	CompartmentName string
-	Operation      string
-	ResourceCount  int64
-	IsCompartmentComplete bool
-	IsError        bool
-	IsRetry        bool
-}
 
 
 
@@ -454,168 +274,8 @@ func (pt *ProgressTracker) formatDuration(d time.Duration) string {
 
 
 
-type OCIClients struct {
-	ComputeClient           core.ComputeClient
-	VirtualNetworkClient    core.VirtualNetworkClient
-	BlockStorageClient      core.BlockstorageClient
-	IdentityClient          identity.IdentityClient
-	ObjectStorageClient     objectstorage.ObjectStorageClient
-	ContainerEngineClient   containerengine.ContainerEngineClient
-	LoadBalancerClient      loadbalancer.LoadBalancerClient
-	DatabaseClient          database.DatabaseClient
-	APIGatewayClient        apigateway.GatewayClient
-	FunctionsClient         functions.FunctionsManagementClient
-	FileStorageClient       filestorage.FileStorageClient
-	NetworkLoadBalancerClient networkloadbalancer.NetworkLoadBalancerClient
-	StreamingClient         streaming.StreamAdminClient
-}
 
-type ResourceInfo struct {
-	ResourceType   string                 `json:"resource_type"`
-	ResourceName   string                 `json:"resource_name"`
-	OCID          string                 `json:"ocid"`
-	CompartmentID string                 `json:"compartment_id"`
-	AdditionalInfo map[string]interface{} `json:"additional_info"`
-}
 
-func initOCIClients() (*OCIClients, error) {
-	// Use instance principal authentication
-	configProvider, err := auth.InstancePrincipalConfigurationProvider()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create instance principal config provider: %w", err)
-	}
-
-	clients := &OCIClients{}
-	
-	// Initialize Compute client
-	computeClient, err := core.NewComputeClientWithConfigurationProvider(configProvider)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create compute client: %w", err)
-	}
-	clients.ComputeClient = computeClient
-	
-	// Initialize VirtualNetwork client
-	vnClient, err := core.NewVirtualNetworkClientWithConfigurationProvider(configProvider)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create virtual network client: %w", err)
-	}
-	clients.VirtualNetworkClient = vnClient
-	
-	// Initialize BlockStorage client
-	bsClient, err := core.NewBlockstorageClientWithConfigurationProvider(configProvider)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create block storage client: %w", err)
-	}
-	clients.BlockStorageClient = bsClient
-	
-	// Initialize Identity client
-	identityClient, err := identity.NewIdentityClientWithConfigurationProvider(configProvider)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create identity client: %w", err)
-	}
-	clients.IdentityClient = identityClient
-
-	// Initialize Object Storage client
-	osClient, err := objectstorage.NewObjectStorageClientWithConfigurationProvider(configProvider)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create object storage client: %w", err)
-	}
-	clients.ObjectStorageClient = osClient
-
-	// Initialize Container Engine client (OKE)
-	ceClient, err := containerengine.NewContainerEngineClientWithConfigurationProvider(configProvider)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create container engine client: %w", err)
-	}
-	clients.ContainerEngineClient = ceClient
-
-	// Initialize Load Balancer client
-	lbClient, err := loadbalancer.NewLoadBalancerClientWithConfigurationProvider(configProvider)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create load balancer client: %w", err)
-	}
-	clients.LoadBalancerClient = lbClient
-
-	// Initialize Database client
-	dbClient, err := database.NewDatabaseClientWithConfigurationProvider(configProvider)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create database client: %w", err)
-	}
-	clients.DatabaseClient = dbClient
-
-	// Initialize API Gateway client
-	apiGatewayClient, err := apigateway.NewGatewayClientWithConfigurationProvider(configProvider)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create api gateway client: %w", err)
-	}
-	clients.APIGatewayClient = apiGatewayClient
-
-	// Initialize Functions client
-	functionsClient, err := functions.NewFunctionsManagementClientWithConfigurationProvider(configProvider)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create functions client: %w", err)
-	}
-	clients.FunctionsClient = functionsClient
-
-	// Initialize File Storage client
-	fileStorageClient, err := filestorage.NewFileStorageClientWithConfigurationProvider(configProvider)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create file storage client: %w", err)
-	}
-	clients.FileStorageClient = fileStorageClient
-
-	// Initialize Network Load Balancer client
-	nlbClient, err := networkloadbalancer.NewNetworkLoadBalancerClientWithConfigurationProvider(configProvider)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create network load balancer client: %w", err)
-	}
-	clients.NetworkLoadBalancerClient = nlbClient
-
-	// Initialize Streaming client
-	streamingClient, err := streaming.NewStreamAdminClientWithConfigurationProvider(configProvider)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create streaming client: %w", err)
-	}
-	clients.StreamingClient = streamingClient
-
-	return clients, nil
-}
-
-func getCompartments(ctx context.Context, clients *OCIClients) ([]identity.Compartment, error) {
-	// Get tenancy ID from the instance principal
-	configProvider, err := auth.InstancePrincipalConfigurationProvider()
-	if err != nil {
-		return nil, err
-	}
-	
-	tenancyID, err := configProvider.TenancyOCID()
-	if err != nil {
-		return nil, err
-	}
-
-	// List compartments
-	req := identity.ListCompartmentsRequest{
-		CompartmentId: common.String(tenancyID),
-		AccessLevel:   identity.ListCompartmentsAccessLevelAccessible,
-	}
-
-	resp, err := clients.IdentityClient.ListCompartments(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-
-	// Include root compartment
-	compartments := resp.Items
-	rootCompartment := identity.Compartment{
-		Id:             common.String(tenancyID),
-		Name:           common.String("root"),
-		CompartmentId:  common.String(tenancyID),
-		LifecycleState: identity.CompartmentLifecycleStateActive,
-	}
-	compartments = append([]identity.Compartment{rootCompartment}, compartments...)
-
-	return compartments, nil
-}
 
 func discoverComputeInstances(ctx context.Context, clients *OCIClients, compartmentID string) ([]ResourceInfo, error) {
 	var resources []ResourceInfo
