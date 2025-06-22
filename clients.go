@@ -28,125 +28,171 @@ func initOCIClients(ctx context.Context) (*OCIClients, error) {
 	default:
 	}
 	
-	// Use instance principal authentication
-	configProvider, err := auth.InstancePrincipalConfigurationProvider()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create instance principal config provider: %w", err)
+	// Use instance principal authentication with timeout control
+	type configProviderResult struct {
+		provider common.ConfigurationProvider
+		err      error
+	}
+	configProviderChan := make(chan configProviderResult, 1)
+	
+	go func() {
+		provider, err := auth.InstancePrincipalConfigurationProvider()
+		configProviderChan <- configProviderResult{provider: provider, err: err}
+	}()
+	
+	var configProvider common.ConfigurationProvider
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case result := <-configProviderChan:
+		if result.err != nil {
+			return nil, fmt.Errorf("failed to create instance principal config provider: %w", result.err)
+		}
+		configProvider = result.provider
 	}
 
 	clients := &OCIClients{}
 	
-	// Initialize Compute client
-	computeClient, err := core.NewComputeClientWithConfigurationProvider(configProvider)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create compute client: %w", err)
+	// Helper function to initialize client with timeout
+	initClientWithTimeout := func(clientName string, initFunc func() (interface{}, error)) (interface{}, error) {
+		type clientResult struct {
+			client interface{}
+			err    error
+		}
+		clientChan := make(chan clientResult, 1)
+		
+		go func() {
+			client, err := initFunc()
+			clientChan <- clientResult{client: client, err: err}
+		}()
+		
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case result := <-clientChan:
+			if result.err != nil {
+				return nil, fmt.Errorf("failed to create %s client: %w", clientName, result.err)
+			}
+			return result.client, nil
+		}
 	}
-	clients.ComputeClient = computeClient
 	
-	// Check context before continuing
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	default:
+	// Initialize Compute client
+	computeInterface, err := initClientWithTimeout("compute", func() (interface{}, error) {
+		return core.NewComputeClientWithConfigurationProvider(configProvider)
+	})
+	if err != nil {
+		return nil, err
 	}
+	clients.ComputeClient = computeInterface.(core.ComputeClient)
 	
 	// Initialize VirtualNetwork client
-	vnClient, err := core.NewVirtualNetworkClientWithConfigurationProvider(configProvider)
+	vnInterface, err := initClientWithTimeout("virtual network", func() (interface{}, error) {
+		return core.NewVirtualNetworkClientWithConfigurationProvider(configProvider)
+	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create virtual network client: %w", err)
+		return nil, err
 	}
-	clients.VirtualNetworkClient = vnClient
+	clients.VirtualNetworkClient = vnInterface.(core.VirtualNetworkClient)
 	
 	// Initialize BlockStorage client
-	bsClient, err := core.NewBlockstorageClientWithConfigurationProvider(configProvider)
+	bsInterface, err := initClientWithTimeout("block storage", func() (interface{}, error) {
+		return core.NewBlockstorageClientWithConfigurationProvider(configProvider)
+	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create block storage client: %w", err)
+		return nil, err
 	}
-	clients.BlockStorageClient = bsClient
+	clients.BlockStorageClient = bsInterface.(core.BlockstorageClient)
 	
 	// Initialize Identity client
-	identityClient, err := identity.NewIdentityClientWithConfigurationProvider(configProvider)
+	identityInterface, err := initClientWithTimeout("identity", func() (interface{}, error) {
+		return identity.NewIdentityClientWithConfigurationProvider(configProvider)
+	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create identity client: %w", err)
+		return nil, err
 	}
-	clients.IdentityClient = identityClient
-	
-	// Check context before continuing
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	default:
-	}
+	clients.IdentityClient = identityInterface.(identity.IdentityClient)
 
 	// Initialize Object Storage client
-	osClient, err := objectstorage.NewObjectStorageClientWithConfigurationProvider(configProvider)
+	osInterface, err := initClientWithTimeout("object storage", func() (interface{}, error) {
+		return objectstorage.NewObjectStorageClientWithConfigurationProvider(configProvider)
+	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create object storage client: %w", err)
+		return nil, err
 	}
-	clients.ObjectStorageClient = osClient
+	clients.ObjectStorageClient = osInterface.(objectstorage.ObjectStorageClient)
 
 	// Initialize Container Engine client (OKE)
-	ceClient, err := containerengine.NewContainerEngineClientWithConfigurationProvider(configProvider)
+	ceInterface, err := initClientWithTimeout("container engine", func() (interface{}, error) {
+		return containerengine.NewContainerEngineClientWithConfigurationProvider(configProvider)
+	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create container engine client: %w", err)
+		return nil, err
 	}
-	clients.ContainerEngineClient = ceClient
+	clients.ContainerEngineClient = ceInterface.(containerengine.ContainerEngineClient)
 
 	// Initialize Load Balancer client
-	lbClient, err := loadbalancer.NewLoadBalancerClientWithConfigurationProvider(configProvider)
+	lbInterface, err := initClientWithTimeout("load balancer", func() (interface{}, error) {
+		return loadbalancer.NewLoadBalancerClientWithConfigurationProvider(configProvider)
+	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create load balancer client: %w", err)
+		return nil, err
 	}
-	clients.LoadBalancerClient = lbClient
+	clients.LoadBalancerClient = lbInterface.(loadbalancer.LoadBalancerClient)
 
 	// Initialize Database client
-	dbClient, err := database.NewDatabaseClientWithConfigurationProvider(configProvider)
+	dbInterface, err := initClientWithTimeout("database", func() (interface{}, error) {
+		return database.NewDatabaseClientWithConfigurationProvider(configProvider)
+	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create database client: %w", err)
+		return nil, err
 	}
-	clients.DatabaseClient = dbClient
-
-	// Check context before continuing
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	default:
-	}
+	clients.DatabaseClient = dbInterface.(database.DatabaseClient)
 
 	// Initialize API Gateway client
-	apiGatewayClient, err := apigateway.NewGatewayClientWithConfigurationProvider(configProvider)
+	apiGatewayInterface, err := initClientWithTimeout("api gateway", func() (interface{}, error) {
+		return apigateway.NewGatewayClientWithConfigurationProvider(configProvider)
+	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create api gateway client: %w", err)
+		return nil, err
 	}
-	clients.APIGatewayClient = apiGatewayClient
+	clients.APIGatewayClient = apiGatewayInterface.(apigateway.GatewayClient)
 
 	// Initialize Functions client
-	functionsClient, err := functions.NewFunctionsManagementClientWithConfigurationProvider(configProvider)
+	functionsInterface, err := initClientWithTimeout("functions", func() (interface{}, error) {
+		return functions.NewFunctionsManagementClientWithConfigurationProvider(configProvider)
+	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create functions client: %w", err)
+		return nil, err
 	}
-	clients.FunctionsClient = functionsClient
+	clients.FunctionsClient = functionsInterface.(functions.FunctionsManagementClient)
 
 	// Initialize File Storage client
-	fileStorageClient, err := filestorage.NewFileStorageClientWithConfigurationProvider(configProvider)
+	fileStorageInterface, err := initClientWithTimeout("file storage", func() (interface{}, error) {
+		return filestorage.NewFileStorageClientWithConfigurationProvider(configProvider)
+	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create file storage client: %w", err)
+		return nil, err
 	}
-	clients.FileStorageClient = fileStorageClient
+	clients.FileStorageClient = fileStorageInterface.(filestorage.FileStorageClient)
 
 	// Initialize Network Load Balancer client
-	nlbClient, err := networkloadbalancer.NewNetworkLoadBalancerClientWithConfigurationProvider(configProvider)
+	nlbInterface, err := initClientWithTimeout("network load balancer", func() (interface{}, error) {
+		return networkloadbalancer.NewNetworkLoadBalancerClientWithConfigurationProvider(configProvider)
+	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create network load balancer client: %w", err)
+		return nil, err
 	}
-	clients.NetworkLoadBalancerClient = nlbClient
+	clients.NetworkLoadBalancerClient = nlbInterface.(networkloadbalancer.NetworkLoadBalancerClient)
 
 	// Initialize Streaming client
-	streamingClient, err := streaming.NewStreamAdminClientWithConfigurationProvider(configProvider)
+	streamingInterface, err := initClientWithTimeout("streaming", func() (interface{}, error) {
+		return streaming.NewStreamAdminClientWithConfigurationProvider(configProvider)
+	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create streaming client: %w", err)
+		return nil, err
 	}
-	clients.StreamingClient = streamingClient
+	clients.StreamingClient = streamingInterface.(streaming.StreamAdminClient)
 
 	// Final context check
 	select {
@@ -158,28 +204,109 @@ func initOCIClients(ctx context.Context) (*OCIClients, error) {
 	return clients, nil
 }
 
-// getCompartments retrieves all accessible compartments in the tenancy
+// getCompartments retrieves all accessible compartments in the tenancy with aggressive timeout control
 func getCompartments(ctx context.Context, clients *OCIClients) ([]identity.Compartment, error) {
-	// Get tenancy ID from the instance principal
-	configProvider, err := auth.InstancePrincipalConfigurationProvider()
-	if err != nil {
-		return nil, err
+	// Check context before starting
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
 	}
 	
-	tenancyID, err := configProvider.TenancyOCID()
-	if err != nil {
-		return nil, err
+	// Get tenancy ID from the instance principal with timeout channel
+	type configResult struct {
+		provider common.ConfigurationProvider
+		err      error
+	}
+	configChan := make(chan configResult, 1)
+	
+	go func() {
+		provider, err := auth.InstancePrincipalConfigurationProvider()
+		configChan <- configResult{provider: provider, err: err}
+	}()
+	
+	var configProvider common.ConfigurationProvider
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case result := <-configChan:
+		if result.err != nil {
+			return nil, result.err
+		}
+		configProvider = result.provider
+	}
+	
+	// Check context after config provider setup
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+	
+	// Get tenancy ID with timeout channel
+	type tenancyResult struct {
+		tenancyID string
+		err       error
+	}
+	tenancyChan := make(chan tenancyResult, 1)
+	
+	go func() {
+		tenancyID, err := configProvider.TenancyOCID()
+		tenancyChan <- tenancyResult{tenancyID: tenancyID, err: err}
+	}()
+	
+	var tenancyID string
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case result := <-tenancyChan:
+		if result.err != nil {
+			return nil, result.err
+		}
+		tenancyID = result.tenancyID
 	}
 
-	// List compartments
+	// Check context before API call
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+
+	// List compartments with explicit context deadline
 	req := identity.ListCompartmentsRequest{
 		CompartmentId: common.String(tenancyID),
 		AccessLevel:   identity.ListCompartmentsAccessLevelAccessible,
 	}
 
-	resp, err := clients.IdentityClient.ListCompartments(ctx, req)
-	if err != nil {
-		return nil, err
+	// Execute API call with timeout channel for aggressive control
+	type compartmentResult struct {
+		resp identity.ListCompartmentsResponse
+		err  error
+	}
+	compartmentChan := make(chan compartmentResult, 1)
+	
+	go func() {
+		resp, err := clients.IdentityClient.ListCompartments(ctx, req)
+		compartmentChan <- compartmentResult{resp: resp, err: err}
+	}()
+	
+	var resp identity.ListCompartmentsResponse
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case result := <-compartmentChan:
+		if result.err != nil {
+			return nil, result.err
+		}
+		resp = result.resp
+	}
+
+	// Final context check
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
 	}
 
 	// Include root compartment
