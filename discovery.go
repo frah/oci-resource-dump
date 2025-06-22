@@ -1177,7 +1177,7 @@ func discoverStreams(ctx context.Context, clients *OCIClients, compartmentID str
 }
 
 // discoverAllResourcesWithProgress coordinates the discovery of all resource types with progress tracking
-func discoverAllResourcesWithProgress(ctx context.Context, clients *OCIClients, progressTracker *ProgressTracker) ([]ResourceInfo, error) {
+func discoverAllResourcesWithProgress(ctx context.Context, clients *OCIClients, progressTracker *ProgressTracker, filters FilterConfig) ([]ResourceInfo, error) {
 	var allResources []ResourceInfo
 
 	// Get list of compartments
@@ -1186,11 +1186,19 @@ func discoverAllResourcesWithProgress(ctx context.Context, clients *OCIClients, 
 		return nil, fmt.Errorf("failed to get compartments: %w", err)
 	}
 
-	logger.Info("Found %d compartments to process", len(compartments))
+	// Apply compartment filters
+	filteredCompartments := ApplyCompartmentFilter(compartments, filters)
+	logger.Info("Found %d compartments to process (filtered from %d)", len(filteredCompartments), len(compartments))
+
+	// Compile filter regex patterns for efficient matching
+	compiledFilters, err := CompileFilters(filters)
+	if err != nil {
+		return nil, fmt.Errorf("failed to compile filter patterns: %w", err)
+	}
 
 	// Update progress tracker with compartment count
 	if progressTracker != nil {
-		progressTracker.totalCompartments = int64(len(compartments))
+		progressTracker.totalCompartments = int64(len(filteredCompartments))
 		progressTracker.totalResourceTypes = 15 // Number of resource types we discover
 		progressTracker.Start()
 		defer progressTracker.Stop()
@@ -1221,7 +1229,7 @@ func discoverAllResourcesWithProgress(ctx context.Context, clients *OCIClients, 
 		"Streams":               discoverStreams,
 	}
 
-	for _, compartment := range compartments {
+	for _, compartment := range filteredCompartments {
 		if compartment.LifecycleState != "ACTIVE" {
 			continue
 		}
@@ -1238,6 +1246,11 @@ func discoverAllResourcesWithProgress(ctx context.Context, clients *OCIClients, 
 
 			// Process each resource type for this compartment
 			for resourceType, discoveryFunc := range discoveryFuncs {
+				// Apply resource type filter
+				if !ApplyResourceTypeFilter(resourceType, filters) {
+					logger.Debug("Skipping resource type %s due to filters", resourceType)
+					continue
+				}
 				// Update progress
 				if progressTracker != nil {
 					progressTracker.Update(ProgressUpdate{
@@ -1276,15 +1289,29 @@ func discoverAllResourcesWithProgress(ctx context.Context, clients *OCIClients, 
 					continue
 				}
 
-				// Add resources to the global list
-				if len(resources) > 0 {
+				// Apply name filters to discovered resources
+				filteredResources := make([]ResourceInfo, 0, len(resources))
+				for _, resource := range resources {
+					if ApplyNameFilter(resource.ResourceName, compiledFilters) {
+						filteredResources = append(filteredResources, resource)
+					} else {
+						logger.Debug("Filtering out resource %s due to name filters", resource.ResourceName)
+					}
+				}
+
+				// Add filtered resources to the global list
+				if len(filteredResources) > 0 {
 					mu.Lock()
-					allResources = append(allResources, resources...)
+					allResources = append(allResources, filteredResources...)
 					mu.Unlock()
 					
 					if progressTracker != nil {
-						progressTracker.Update(ProgressUpdate{ResourceCount: int64(len(resources))})
+						progressTracker.Update(ProgressUpdate{ResourceCount: int64(len(filteredResources))})
 					}
+				}
+				
+				if len(resources) > len(filteredResources) {
+					logger.Verbose("Filtered %d resources by name in %s %s", len(resources)-len(filteredResources), resourceType, compName)
 				}
 			}
 

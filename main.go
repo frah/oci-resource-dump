@@ -47,6 +47,15 @@ func main() {
 	var outputFile *string = flag.String("output-file", "", "Output file path (default: stdout)")
 	var outputFileShort *string = flag.String("o", "", "Output file path (default: stdout, shorthand)")
 	var generateConfig *bool = flag.Bool("generate-config", false, "Generate default configuration file")
+	
+	// Phase 2B: Filter CLI arguments
+	var compartments *string = flag.String("compartments", "", "Comma-separated list of compartment OCIDs to include")
+	var excludeCompartments *string = flag.String("exclude-compartments", "", "Comma-separated list of compartment OCIDs to exclude")
+	var resourceTypes *string = flag.String("resource-types", "", "Comma-separated list of resource types to include")
+	var excludeResourceTypes *string = flag.String("exclude-resource-types", "", "Comma-separated list of resource types to exclude")
+	var nameFilter *string = flag.String("name-filter", "", "Regex pattern for resource names to include")
+	var excludeNameFilter *string = flag.String("exclude-name-filter", "", "Regex pattern for resource names to exclude")
+	
 	flag.Parse()
 
 	// Handle configuration file generation
@@ -97,11 +106,38 @@ func main() {
 
 	// Merge CLI arguments with configuration file (CLI has higher priority)
 	MergeWithCLIArgs(appConfig, finalTimeout, finalLogLevel, finalFormat, finalProgress, finalOutputFile)
+	
+	// Phase 2B: Parse and merge filter arguments
+	if *compartments != "" {
+		appConfig.Filters.IncludeCompartments = ParseCompartmentList(*compartments)
+	}
+	if *excludeCompartments != "" {
+		appConfig.Filters.ExcludeCompartments = ParseCompartmentList(*excludeCompartments)
+	}
+	if *resourceTypes != "" {
+		appConfig.Filters.IncludeResourceTypes = ParseResourceTypeList(*resourceTypes)
+	}
+	if *excludeResourceTypes != "" {
+		appConfig.Filters.ExcludeResourceTypes = ParseResourceTypeList(*excludeResourceTypes)
+	}
+	if *nameFilter != "" {
+		appConfig.Filters.NamePattern = *nameFilter
+	}
+	if *excludeNameFilter != "" {
+		appConfig.Filters.ExcludeNamePattern = *excludeNameFilter
+	}
 
+	// Validate filter configuration
+	if err := ValidateFilterConfig(appConfig.Filters); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: Invalid filter configuration: %v\n", err)
+		os.Exit(1)
+	}
+	
 	// Convert AppConfig to runtime Config
 	config := &Config{}
 	config.Timeout = time.Duration(appConfig.General.Timeout) * time.Second
 	config.OutputFormat = strings.ToLower(appConfig.General.OutputFormat)
+	config.Filters = appConfig.Filters
 	
 	// Parse and validate log level
 	logLevel, err := ParseLogLevel(appConfig.General.LogLevel)
@@ -156,7 +192,7 @@ func main() {
 	// Discover all resources
 	logger.Info("Starting resource discovery with %v timeout...", config.Timeout)
 	logger.Debug("Discovery configuration - Format: %s, Timeout: %v, LogLevel: %s, Progress: %v", config.OutputFormat, config.Timeout, config.LogLevel, config.ShowProgress)
-	resources, err := discoverAllResourcesWithProgress(ctx, clients, config.ProgressTracker)
+	resources, err := discoverAllResourcesWithProgress(ctx, clients, config.ProgressTracker, config.Filters)
 	if err != nil {
 		logger.Error("Error discovering resources: %v", err)
 		os.Exit(1)
