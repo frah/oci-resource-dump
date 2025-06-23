@@ -194,6 +194,9 @@ func initOCIClients(ctx context.Context) (*OCIClients, error) {
 	}
 	clients.StreamingClient = streamingInterface.(streaming.StreamAdminClient)
 
+	// Initialize Compartment Name Cache
+	clients.CompartmentCache = NewCompartmentNameCache(clients.IdentityClient)
+
 	// Final context check
 	select {
 	case <-ctx.Done():

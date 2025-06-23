@@ -7,6 +7,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/oracle/oci-go-sdk/v65/common/auth"
 )
 
 
@@ -237,6 +239,30 @@ func main() {
 		os.Exit(1)
 	}
 	logger.Verbose("OCI clients initialized successfully")
+
+	// Preload compartment names for better performance
+	logger.Debug("Preloading compartment names...")
+	
+	// Get tenancy ID for preloading
+	provider, err := auth.InstancePrincipalConfigurationProvider()
+	if err != nil {
+		logger.Error("Error getting configuration provider: %v", err)
+		os.Exit(1)
+	}
+	tenancyID, err := provider.TenancyOCID()
+	if err != nil {
+		logger.Error("Error getting tenancy ID: %v", err)
+		os.Exit(1)
+	}
+	
+	err = clients.CompartmentCache.PreloadCompartmentNames(ctx, tenancyID)
+	if err != nil {
+		logger.Verbose("Warning: Could not preload all compartment names: %v", err)
+		// Continue execution - individual lookups will still work
+	} else {
+		totalEntries, _ := clients.CompartmentCache.GetCacheStats()
+		logger.Verbose("Preloaded %d compartment names into cache", totalEntries)
+	}
 
 	// Discover all resources
 	logger.Info("Starting resource discovery with %v timeout...", config.Timeout)

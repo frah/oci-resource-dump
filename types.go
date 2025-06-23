@@ -44,15 +44,24 @@ type OCIClients struct {
 	FileStorageClient       filestorage.FileStorageClient
 	NetworkLoadBalancerClient networkloadbalancer.NetworkLoadBalancerClient
 	StreamingClient         streaming.StreamAdminClient
+	CompartmentCache        *CompartmentNameCache
 }
 
 // ResourceInfo represents a discovered OCI resource
 type ResourceInfo struct {
-	ResourceType   string                 `json:"resource_type"`
-	ResourceName   string                 `json:"resource_name"`
-	OCID          string                 `json:"ocid"`
-	CompartmentID string                 `json:"compartment_id"`
-	AdditionalInfo map[string]interface{} `json:"additional_info"`
+	ResourceType     string                 `json:"resource_type"`
+	CompartmentName  string                 `json:"compartment_name"`
+	ResourceName     string                 `json:"resource_name"`
+	OCID            string                 `json:"ocid"`
+	CompartmentID   string                 `json:"compartment_id"`
+	AdditionalInfo  map[string]interface{} `json:"additional_info"`
+}
+
+// CompartmentNameCache provides thread-safe caching for compartment name resolution
+type CompartmentNameCache struct {
+	mu     sync.RWMutex
+	cache  map[string]string // OCID -> Name mapping
+	client identity.IdentityClient
 }
 
 // ProgressTracker provides thread-safe progress tracking with ETA calculation

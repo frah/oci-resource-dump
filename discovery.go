@@ -22,6 +22,20 @@ import (
 	"github.com/oracle/oci-go-sdk/v65/streaming"
 )
 
+// createResourceInfo creates a ResourceInfo with compartment name resolution
+func createResourceInfo(ctx context.Context, resourceType, resourceName, ocid, compartmentID string, additionalInfo map[string]interface{}, cache *CompartmentNameCache) ResourceInfo {
+	compartmentName := cache.GetCompartmentName(ctx, compartmentID)
+	
+	return ResourceInfo{
+		ResourceType:     resourceType,
+		CompartmentName:  compartmentName,
+		ResourceName:     resourceName,
+		OCID:            ocid,
+		CompartmentID:   compartmentID,
+		AdditionalInfo:  additionalInfo,
+	}
+}
+
 // isRetriableError checks if the error is a retriable error (non-existent resource, permission issue, etc.)
 func isRetriableError(err error) bool {
 	// These should not cause the entire program to fail
@@ -178,13 +192,7 @@ func discoverComputeInstances(ctx context.Context, clients *OCIClients, compartm
 				additionalInfo["shape"] = *instance.Shape
 			}
 			
-			resources = append(resources, ResourceInfo{
-				ResourceType:   "ComputeInstance",
-				ResourceName:   name,
-				OCID:          ocid,
-				CompartmentID: compartmentID,
-				AdditionalInfo: additionalInfo,
-			})
+			resources = append(resources, createResourceInfo(ctx, "ComputeInstance", name, ocid, compartmentID, additionalInfo, clients.CompartmentCache))
 		}
 	}
 
@@ -247,13 +255,7 @@ func discoverVCNs(ctx context.Context, clients *OCIClients, compartmentID string
 				additionalInfo["dns_label"] = *vcn.DnsLabel
 			}
 			
-			resources = append(resources, ResourceInfo{
-				ResourceType:   "VCN",
-				ResourceName:   name,
-				OCID:          ocid,
-				CompartmentID: compartmentID,
-				AdditionalInfo: additionalInfo,
-			})
+			resources = append(resources, createResourceInfo(ctx, "VCN", name, ocid, compartmentID, additionalInfo, clients.CompartmentCache))
 		}
 	}
 
@@ -316,13 +318,7 @@ func discoverSubnets(ctx context.Context, clients *OCIClients, compartmentID str
 				additionalInfo["availability_domain"] = *subnet.AvailabilityDomain
 			}
 			
-			resources = append(resources, ResourceInfo{
-				ResourceType:   "Subnet",
-				ResourceName:   name,
-				OCID:          ocid,
-				CompartmentID: compartmentID,
-				AdditionalInfo: additionalInfo,
-			})
+			resources = append(resources, createResourceInfo(ctx, "Subnet", name, ocid, compartmentID, additionalInfo, clients.CompartmentCache))
 		}
 	}
 
@@ -385,13 +381,7 @@ func discoverBlockVolumes(ctx context.Context, clients *OCIClients, compartmentI
 				additionalInfo["vpus_per_gb"] = *volume.VpusPerGB
 			}
 			
-			resources = append(resources, ResourceInfo{
-				ResourceType:   "BlockVolume",
-				ResourceName:   name,
-				OCID:          ocid,
-				CompartmentID: compartmentID,
-				AdditionalInfo: additionalInfo,
-			})
+			resources = append(resources, createResourceInfo(ctx, "BlockVolume", name, ocid, compartmentID, additionalInfo, clients.CompartmentCache))
 		}
 	}
 
@@ -438,13 +428,7 @@ func discoverObjectStorageBuckets(ctx context.Context, clients *OCIClients, comp
 		
 		// Note: Object Storage buckets don't have traditional OCIDs like other resources
 		// The bucket name serves as the identifier
-		resources = append(resources, ResourceInfo{
-			ResourceType:   "ObjectStorageBucket",
-			ResourceName:   name,
-			OCID:          fmt.Sprintf("bucket:%s:%s", namespace, name),
-			CompartmentID: compartmentID,
-			AdditionalInfo: additionalInfo,
-		})
+		resources = append(resources, createResourceInfo(ctx, "ObjectStorageBucket", name, fmt.Sprintf("bucket:%s:%s", namespace, name), compartmentID, additionalInfo, clients.CompartmentCache))
 	}
 
 	logger.Verbose("Found %d object storage buckets in compartment %s", len(resources), compartmentID)
@@ -501,13 +485,7 @@ func discoverOKEClusters(ctx context.Context, clients *OCIClients, compartmentID
 				additionalInfo["kubernetes_version"] = *cluster.KubernetesVersion
 			}
 			
-			resources = append(resources, ResourceInfo{
-				ResourceType:   "OKECluster",
-				ResourceName:   name,
-				OCID:          ocid,
-				CompartmentID: compartmentID,
-				AdditionalInfo: additionalInfo,
-			})
+			resources = append(resources, createResourceInfo(ctx, "OKECluster", name, ocid, compartmentID, additionalInfo, clients.CompartmentCache))
 		}
 	}
 
@@ -576,13 +554,7 @@ func discoverLoadBalancers(ctx context.Context, clients *OCIClients, compartment
 				additionalInfo["ip_addresses"] = ipAddresses
 			}
 			
-			resources = append(resources, ResourceInfo{
-				ResourceType:   "LoadBalancer",
-				ResourceName:   name,
-				OCID:          ocid,
-				CompartmentID: compartmentID,
-				AdditionalInfo: additionalInfo,
-			})
+			resources = append(resources, createResourceInfo(ctx, "LoadBalancer", name, ocid, compartmentID, additionalInfo, clients.CompartmentCache))
 		}
 	}
 
@@ -643,13 +615,8 @@ func discoverDatabases(ctx context.Context, clients *OCIClients, compartmentID s
 			// Add database edition
 			additionalInfo["database_edition"] = string(dbSystem.DatabaseEdition)
 			
-			resources = append(resources, ResourceInfo{
-				ResourceType:   "DatabaseSystem",
-				ResourceName:   name,
-				OCID:          ocid,
-				CompartmentID: compartmentID,
-				AdditionalInfo: additionalInfo,
-			})
+			resources = append(resources, createResourceInfo(ctx, 
+				"DatabaseSystem", name, ocid, compartmentID, additionalInfo, clients.CompartmentCache))
 		}
 	}
 
@@ -702,13 +669,7 @@ func discoverDRGs(ctx context.Context, clients *OCIClients, compartmentID string
 			
 			additionalInfo := make(map[string]interface{})
 			
-			resources = append(resources, ResourceInfo{
-				ResourceType:   "DRG",
-				ResourceName:   name,
-				OCID:          ocid,
-				CompartmentID: compartmentID,
-				AdditionalInfo: additionalInfo,
-			})
+			resources = append(resources, createResourceInfo(ctx, "DRG", name, ocid, compartmentID, additionalInfo, clients.CompartmentCache))
 		}
 	}
 
@@ -774,13 +735,7 @@ func discoverAutonomousDatabases(ctx context.Context, clients *OCIClients, compa
 				additionalInfo["data_storage_size_in_tbs"] = *autonomousDB.DataStorageSizeInTBs
 			}
 			
-			resources = append(resources, ResourceInfo{
-				ResourceType:   "AutonomousDatabase",
-				ResourceName:   name,
-				OCID:          ocid,
-				CompartmentID: compartmentID,
-				AdditionalInfo: additionalInfo,
-			})
+			resources = append(resources, createResourceInfo(ctx, "AutonomousDatabase", name, ocid, compartmentID, additionalInfo, clients.CompartmentCache))
 		}
 	}
 
@@ -877,13 +832,7 @@ func discoverFunctions(ctx context.Context, clients *OCIClients, compartmentID s
 						additionalInfo["memory_in_mbs"] = *function.MemoryInMBs
 					}
 					
-					resources = append(resources, ResourceInfo{
-						ResourceType:   "Function",
-						ResourceName:   name,
-						OCID:          ocid,
-						CompartmentID: compartmentID,
-						AdditionalInfo: additionalInfo,
-					})
+					resources = append(resources, createResourceInfo(ctx, "Function", name, ocid, compartmentID, additionalInfo, clients.CompartmentCache))
 				}
 			}
 		}
@@ -942,13 +891,7 @@ func discoverAPIGateways(ctx context.Context, clients *OCIClients, compartmentID
 			
 			// Note: Would need to use different API client to get deployment information
 			
-			resources = append(resources, ResourceInfo{
-				ResourceType:   "APIGateway",
-				ResourceName:   name,
-				OCID:          ocid,
-				CompartmentID: compartmentID,
-				AdditionalInfo: additionalInfo,
-			})
+			resources = append(resources, createResourceInfo(ctx, "APIGateway", name, ocid, compartmentID, additionalInfo, clients.CompartmentCache))
 		}
 	}
 
@@ -1012,13 +955,7 @@ func discoverFileStorageSystems(ctx context.Context, clients *OCIClients, compar
 				additionalInfo["availability_domain"] = *fileSystem.AvailabilityDomain
 			}
 			
-			resources = append(resources, ResourceInfo{
-				ResourceType:   "FileStorageSystem",
-				ResourceName:   name,
-				OCID:          ocid,
-				CompartmentID: compartmentID,
-				AdditionalInfo: additionalInfo,
-			})
+			resources = append(resources, createResourceInfo(ctx, "FileStorageSystem", name, ocid, compartmentID, additionalInfo, clients.CompartmentCache))
 		}
 	}
 
@@ -1084,13 +1021,7 @@ func discoverNetworkLoadBalancers(ctx context.Context, clients *OCIClients, comp
 				additionalInfo["ip_addresses"] = ipAddresses
 			}
 			
-			resources = append(resources, ResourceInfo{
-				ResourceType:   "NetworkLoadBalancer",
-				ResourceName:   name,
-				OCID:          ocid,
-				CompartmentID: compartmentID,
-				AdditionalInfo: additionalInfo,
-			})
+			resources = append(resources, createResourceInfo(ctx, "NetworkLoadBalancer", name, ocid, compartmentID, additionalInfo, clients.CompartmentCache))
 		}
 	}
 
@@ -1162,13 +1093,7 @@ func discoverStreams(ctx context.Context, clients *OCIClients, compartmentID str
 				}
 			}
 			
-			resources = append(resources, ResourceInfo{
-				ResourceType:   "Stream",
-				ResourceName:   name,
-				OCID:          ocid,
-				CompartmentID: compartmentID,
-				AdditionalInfo: additionalInfo,
-			})
+			resources = append(resources, createResourceInfo(ctx, "Stream", name, ocid, compartmentID, additionalInfo, clients.CompartmentCache))
 		}
 	}
 

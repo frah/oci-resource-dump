@@ -20,7 +20,7 @@ func outputCSV(resources []ResourceInfo) error {
 	defer writer.Flush()
 
 	// Write header
-	header := []string{"ResourceType", "ResourceName", "OCID", "CompartmentID", "AdditionalInfo"}
+	header := []string{"ResourceType", "CompartmentName", "ResourceName", "OCID", "CompartmentID", "AdditionalInfo"}
 	if err := writer.Write(header); err != nil {
 		return err
 	}
@@ -30,6 +30,7 @@ func outputCSV(resources []ResourceInfo) error {
 		additionalInfoJSON, _ := json.Marshal(resource.AdditionalInfo)
 		record := []string{
 			resource.ResourceType,
+			resource.CompartmentName,
 			resource.ResourceName,
 			resource.OCID,
 			resource.CompartmentID,
@@ -46,13 +47,14 @@ func outputCSV(resources []ResourceInfo) error {
 // outputTSV outputs resources in TSV (Tab-Separated Values) format
 func outputTSV(resources []ResourceInfo) error {
 	// Write header
-	fmt.Println("ResourceType\tResourceName\tOCID\tCompartmentID\tAdditionalInfo")
+	fmt.Println("ResourceType\tCompartmentName\tResourceName\tOCID\tCompartmentID\tAdditionalInfo")
 
 	// Write data
 	for _, resource := range resources {
 		additionalInfoJSON, _ := json.Marshal(resource.AdditionalInfo)
-		fmt.Printf("%s\t%s\t%s\t%s\t%s\n",
+		fmt.Printf("%s\t%s\t%s\t%s\t%s\t%s\n",
 			resource.ResourceType,
+			resource.CompartmentName,
 			resource.ResourceName,
 			resource.OCID,
 			resource.CompartmentID,
@@ -110,7 +112,7 @@ func outputCSVToFile(resources []ResourceInfo, file *os.File) error {
 	defer writer.Flush()
 
 	// Write header
-	header := []string{"ResourceType", "ResourceName", "OCID", "CompartmentID", "AdditionalInfo"}
+	header := []string{"ResourceType", "CompartmentName", "ResourceName", "OCID", "CompartmentID", "AdditionalInfo"}
 	if err := writer.Write(header); err != nil {
 		return err
 	}
@@ -120,6 +122,7 @@ func outputCSVToFile(resources []ResourceInfo, file *os.File) error {
 		additionalInfoJSON, _ := json.Marshal(resource.AdditionalInfo)
 		record := []string{
 			resource.ResourceType,
+			resource.CompartmentName,
 			resource.ResourceName,
 			resource.OCID,
 			resource.CompartmentID,
@@ -136,15 +139,16 @@ func outputCSVToFile(resources []ResourceInfo, file *os.File) error {
 // outputTSVToFile outputs resources in TSV format to a file
 func outputTSVToFile(resources []ResourceInfo, file *os.File) error {
 	// Write header
-	if _, err := fmt.Fprintln(file, "ResourceType\tResourceName\tOCID\tCompartmentID\tAdditionalInfo"); err != nil {
+	if _, err := fmt.Fprintln(file, "ResourceType\tCompartmentName\tResourceName\tOCID\tCompartmentID\tAdditionalInfo"); err != nil {
 		return err
 	}
 
 	// Write data
 	for _, resource := range resources {
 		additionalInfoJSON, _ := json.Marshal(resource.AdditionalInfo)
-		if _, err := fmt.Fprintf(file, "%s\t%s\t%s\t%s\t%s\n",
+		if _, err := fmt.Fprintf(file, "%s\t%s\t%s\t%s\t%s\t%s\n",
 			resource.ResourceType,
+			resource.CompartmentName,
 			resource.ResourceName,
 			resource.OCID,
 			resource.CompartmentID,
