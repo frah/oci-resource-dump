@@ -35,17 +35,17 @@ var logger *Logger
 // Output functions moved to output.go
 
 func main() {
-	// CLI argument variables
-	var timeoutSeconds *int = flag.Int("timeout", 0, "Timeout in seconds for the entire operation")
-	var timeoutShort *int = flag.Int("t", 0, "Timeout in seconds for the entire operation (shorthand)")
-	var logLevelStr *string = flag.String("log-level", "", "Log level: silent, normal, verbose, debug")
-	var logLevelShort *string = flag.String("l", "", "Log level: silent, normal, verbose, debug (shorthand)")
-	var outputFormat *string = flag.String("format", "", "Output format: csv, tsv, or json")
-	var outputFormatShort *string = flag.String("f", "", "Output format: csv, tsv, or json (shorthand)")
+	// CLI argument variables with special default values to detect "not specified"
+	var timeoutSeconds *int = flag.Int("timeout", -1, "Timeout in seconds for the entire operation")
+	var timeoutShort *int = flag.Int("t", -1, "Timeout in seconds for the entire operation (shorthand)")
+	var logLevelStr *string = flag.String("log-level", "NOT_SET", "Log level: silent, normal, verbose, debug")
+	var logLevelShort *string = flag.String("l", "NOT_SET", "Log level: silent, normal, verbose, debug (shorthand)")
+	var outputFormat *string = flag.String("format", "NOT_SET", "Output format: csv, tsv, or json")
+	var outputFormatShort *string = flag.String("f", "NOT_SET", "Output format: csv, tsv, or json (shorthand)")
 	var showProgress *bool = flag.Bool("progress", false, "Show progress bar with real-time statistics")
 	var noProgress *bool = flag.Bool("no-progress", false, "Disable progress bar (default behavior)")
-	var outputFile *string = flag.String("output-file", "", "Output file path (default: stdout)")
-	var outputFileShort *string = flag.String("o", "", "Output file path (default: stdout, shorthand)")
+	var outputFile *string = flag.String("output-file", "NOT_SET", "Output file path (default: stdout)")
+	var outputFileShort *string = flag.String("o", "NOT_SET", "Output file path (default: stdout, shorthand)")
 	var generateConfig *bool = flag.Bool("generate-config", false, "Generate default configuration file")
 	
 	// Phase 2B: Filter CLI arguments
@@ -122,30 +122,35 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Resolve CLI argument priorities (shorthand overrides long form)
+	// Resolve CLI argument priorities (shorthand overrides long form, only if explicitly set)
 	finalTimeout := timeoutSeconds
-	if *timeoutShort != 0 {
+	if *timeoutShort != -1 {
 		finalTimeout = timeoutShort
 	}
 	
 	finalLogLevel := logLevelStr
-	if *logLevelShort != "" {
+	if *logLevelShort != "NOT_SET" {
 		finalLogLevel = logLevelShort
 	}
 	
 	finalFormat := outputFormat
-	if *outputFormatShort != "" {
+	if *outputFormatShort != "NOT_SET" {
 		finalFormat = outputFormatShort
 	}
 	
 	finalOutputFile := outputFile
-	if *outputFileShort != "" {
+	if *outputFileShort != "NOT_SET" {
 		finalOutputFile = outputFileShort
 	}
 	
-	finalProgress := showProgress
+	// Progress flags handling: only explicit flags override config
+	var finalProgress *bool
 	if *noProgress {
-		finalProgress = func() *bool { b := false; return &b }() // no-progress overrides progress
+		finalProgress = func() *bool { b := false; return &b }() // explicit --no-progress
+	} else if *showProgress {
+		finalProgress = func() *bool { b := true; return &b }() // explicit --progress
+	} else {
+		finalProgress = nil // not specified, don't override config
 	}
 
 	// Merge CLI arguments with configuration file (CLI has higher priority)

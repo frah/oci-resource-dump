@@ -160,30 +160,31 @@ func GenerateDefaultConfigFile(filename string) error {
 }
 
 // MergeWithCLIArgs merges configuration file settings with CLI arguments
-// CLI arguments have higher priority than configuration file
+// CLI arguments have higher priority than configuration file, but only when explicitly set
 func MergeWithCLIArgs(config *AppConfig, cliTimeout *int, cliLogLevel *string, cliFormat *string, cliProgress *bool, cliOutputFile *string) {
-	// CLI timeout overrides config
-	if cliTimeout != nil {
+	// CLI timeout overrides config only if explicitly set (not -1)
+	if cliTimeout != nil && *cliTimeout != -1 {
 		config.General.Timeout = *cliTimeout
 	}
 	
-	// CLI log level overrides config
-	if cliLogLevel != nil && *cliLogLevel != "" {
+	// CLI log level overrides config only if explicitly set (not "NOT_SET")
+	if cliLogLevel != nil && *cliLogLevel != "NOT_SET" {
 		config.General.LogLevel = *cliLogLevel
 	}
 	
-	// CLI format overrides config
-	if cliFormat != nil && *cliFormat != "" {
+	// CLI format overrides config only if explicitly set (not "NOT_SET")
+	if cliFormat != nil && *cliFormat != "NOT_SET" {
 		config.General.OutputFormat = *cliFormat
 	}
 	
-	// CLI progress overrides config
+	// CLI progress overrides config only when explicitly set (not nil)
+	// nil means no explicit flag was provided, so keep config file value
 	if cliProgress != nil {
 		config.General.Progress = *cliProgress
 	}
 	
-	// CLI output file overrides config
-	if cliOutputFile != nil && *cliOutputFile != "" {
+	// CLI output file overrides config only if explicitly set (not "NOT_SET")
+	if cliOutputFile != nil && *cliOutputFile != "NOT_SET" {
 		config.Output.File = *cliOutputFile
 	}
 }
