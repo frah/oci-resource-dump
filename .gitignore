@@ -10,6 +10,12 @@
 
 # Output of the go coverage tool, specifically when used with LiteIDE
 *.out
+coverage_*.out
+
+# Build and test logs
+*.log
+diff_result.json
+package-lock.json
 
 # Dependency directories (remove the comment below to include it)
 # vendor/

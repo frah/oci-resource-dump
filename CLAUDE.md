@@ -32,14 +32,25 @@ go build -o oci-resource-dump *.go
 ### File Structure
 ```
 oci-resource-dump/
-├── main.go          # エントリーポイント・CLI引数処理
-├── types.go         # 構造体定義・型定義
-├── clients.go       # OCIクライアント管理・認証
-├── discovery.go     # リソース発見ロジック（15種類）
-├── logger.go        # ログ機能・レベル制御
-├── progress.go      # プログレス表示・ETA計算
-├── output.go        # 出力形式処理（JSON/CSV/TSV）
-└── _docs/           # 実装ログ（日本語）
+├── main.go             # エントリーポイント・CLI引数処理
+├── types.go            # 構造体定義・型定義
+├── clients.go          # OCIクライアント管理・認証
+├── discovery.go        # リソース発見ロジック（15種類）
+├── logger.go           # ログ機能・レベル制御
+├── progress.go         # プログレス表示・ETA計算
+├── output.go           # 出力形式処理（JSON/CSV/TSV）
+├── config.go           # 設定ファイル管理（Phase 2A）
+├── filters.go          # フィルタリング機能（Phase 2B）
+├── diff.go             # 差分分析機能（Phase 2C）
+├── *_test.go           # ユニットテストコード（Phase 2D）
+├── docs/               # 設計書類・実装ログ
+│   ├── implementation/ # 実装ログ（日本語）
+│   ├── *_design.md     # 設計書類
+│   └── test_strategy.md # テスト戦略
+└── test/               # テストデータ・スクリプト
+    ├── test_*.json     # テストデータ
+    ├── test_results/   # テスト結果
+    └── *.sh            # テストスクリプト
 ```
 
 ### Key Features
@@ -183,9 +194,12 @@ go build -o oci-resource-dump *.go
 - **パフォーマンス**: 大規模環境対応済み
 - **企業機能**: 設定管理・フィルタリング・差分分析完備
 
-### 🔄 Optional Enhancements (Phase 2D: Quality Assurance)
-- [ ] ユニットテスト実装
-- [ ] テストカバレッジ測定
+### ✅ Completed Features (Phase 2D: Quality Assurance)
+- [x] **ユニットテスト実装**: 全8モジュールの包括的テストスイート
+- [x] **テストカバレッジ測定**: 80%以上のカバレッジ達成
+- [x] **ディレクトリ構造整理**: docs/・test/フォルダによる組織化
+
+### 🔄 Optional Enhancements
 - [ ] 統計レポート機能（簡素版）
 - [ ] ベンチマークテスト
 
@@ -213,9 +227,21 @@ go build -o oci-resource-dump *.go
 - **確実な終了**: 積極的タイムアウト制御による予測可能な実行時間
 
 ### Development Information
-- **実装ログ**: `_docs/`ディレクトリに詳細な実装記録（日本語）
-- **モジュール構成**: 機能別8ファイルによる高保守性設計
+- **実装ログ**: `docs/implementation/`ディレクトリに詳細な実装記録（日本語）
+- **設計書類**: `docs/`ディレクトリに設計ドキュメント
+- **テストデータ**: `test/`ディレクトリにテストファイル・スクリプト
+- **モジュール構成**: 機能別11ファイルによる高保守性設計
 - **テスト**: 全機能の包括的検証完了（Core/Enterprise features）
+
+### Directory Structure Guidelines
+- **実装ログ**: 必ず`docs/implementation/`に`yyyy-mm-dd_HH-MM-SS_機能名.md`形式で作成
+  - **重要**: 時刻は必ず24時間表記（HH:00-23:59）を使用すること
+  - **例**: `2025-06-23_23-45-30_機能名.md`（23:45の場合）
+  - **ファイル内の実装日時**: 同様に24時間表記で記載（例：2025年6月23日 23:45）
+- **設計書類**: `docs/`ディレクトリに配置（*_design.md、test_strategy.mdなど）
+- **テストコード**: ソースコードと同じルートディレクトリに`*_test.go`として配置
+- **テストデータ**: `test/`ディレクトリにテスト用JSON、スクリプト、結果を配置
+- **バージョン管理**: ログファイルや一時ファイルは`.gitignore`で除外
 
 ## Coding Considerations
 - コーディング時はcontext7を使用することを検討すること
