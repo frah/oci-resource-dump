@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/oracle/oci-go-sdk/v65/common"
 	"github.com/oracle/oci-go-sdk/v65/identity"
@@ -153,4 +154,29 @@ func (c *CompartmentNameCache) ClearCache() {
 	defer c.mu.Unlock()
 	
 	c.cache = make(map[string]string)
+}
+
+// formatShortOCID creates a short, readable version of an OCID for fallback display (global function for testing)
+func formatShortOCID(ocid string) string {
+	if ocid == "" {
+		return "unknown"
+	}
+	
+	if len(ocid) <= 15 {
+		return ocid
+	}
+	
+	// Extract resource type and last 7 characters for short display
+	parts := strings.Split(ocid, ".")
+	if len(parts) >= 2 {
+		resourceType := parts[1]
+		if len(resourceType) > 4 {
+			resourceType = resourceType[:4]
+		}
+		shortEnd := ocid[len(ocid)-7:]
+		return fmt.Sprintf("ocid1.%s...%s", resourceType, shortEnd)
+	}
+	
+	// Fallback to simple truncation
+	return fmt.Sprintf("%s...%s", ocid[:11], ocid[len(ocid)-7:])
 }
