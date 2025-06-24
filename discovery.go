@@ -14,11 +14,12 @@ import (
 	"github.com/oracle/oci-go-sdk/v65/containerengine"
 	"github.com/oracle/oci-go-sdk/v65/core"
 	"github.com/oracle/oci-go-sdk/v65/database"
-	"github.com/oracle/oci-go-sdk/v65/functions"
-	"github.com/oracle/oci-go-sdk/v65/loadbalancer"
-	"github.com/oracle/oci-go-sdk/v65/objectstorage"
 	"github.com/oracle/oci-go-sdk/v65/filestorage"
+	"github.com/oracle/oci-go-sdk/v65/functions"
+	"github.com/oracle/oci-go-sdk/v65/identity"
+	"github.com/oracle/oci-go-sdk/v65/loadbalancer"
 	"github.com/oracle/oci-go-sdk/v65/networkloadbalancer"
+	"github.com/oracle/oci-go-sdk/v65/objectstorage"
 	"github.com/oracle/oci-go-sdk/v65/streaming"
 )
 
@@ -903,63 +904,98 @@ func discoverAPIGateways(ctx context.Context, clients *OCIClients, compartmentID
 	return resources, nil
 }
 
+// getAvailabilityDomains retrieves all availability domains for a compartment
+func getAvailabilityDomains(ctx context.Context, clients *OCIClients, compartmentID string) ([]identity.AvailabilityDomain, error) {
+	logger.Debug("Getting availability domains for compartment: %s", compartmentID)
+	
+	req := identity.ListAvailabilityDomainsRequest{
+		CompartmentId: common.String(compartmentID),
+	}
+
+	resp, err := clients.IdentityClient.ListAvailabilityDomains(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get availability domains: %w", err)
+	}
+
+	logger.Debug("Found %d availability domains", len(resp.Items))
+	return resp.Items, nil
+}
+
 // discoverFileStorageSystems discovers all file storage systems in a compartment
 func discoverFileStorageSystems(ctx context.Context, clients *OCIClients, compartmentID string) ([]ResourceInfo, error) {
 	var resources []ResourceInfo
-	var allFileSystems []filestorage.FileSystemSummary
 
 	logger.Debug("Starting file storage system discovery for compartment: %s", compartmentID)
 	
-	// Implement pagination to get all file systems
-	var page *string
-	pageCount := 0
-	for {
-		pageCount++
-		logger.Debug("Fetching file systems page %d for compartment: %s", pageCount, compartmentID)
-		req := filestorage.ListFileSystemsRequest{
-			CompartmentId: common.String(compartmentID),
-			Page:         page,
-		}
-
-		resp, err := clients.FileStorageClient.ListFileSystems(ctx, req)
-		
-		if err != nil {
-			return nil, err
-		}
-
-		allFileSystems = append(allFileSystems, resp.Items...)
-
-		if resp.OpcNextPage == nil {
-			break
-		}
-		page = resp.OpcNextPage
+	// Get all availability domains for this compartment
+	availabilityDomains, err := getAvailabilityDomains(ctx, clients, compartmentID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get availability domains: %w", err)
 	}
 
-	for _, fileSystem := range allFileSystems {
-		if fileSystem.LifecycleState != filestorage.FileSystemSummaryLifecycleStateDeleted {
-			name := ""
-			if fileSystem.DisplayName != nil {
-				name = *fileSystem.DisplayName
+	// Search file systems in each availability domain
+	for _, ad := range availabilityDomains {
+		if ad.Name == nil {
+			continue
+		}
+
+		adName := *ad.Name
+		logger.Debug("Searching file systems in availability domain: %s", adName)
+
+		var allFileSystems []filestorage.FileSystemSummary
+		
+		// Implement pagination to get all file systems in this AD
+		var page *string
+		pageCount := 0
+		for {
+			pageCount++
+			logger.Debug("Fetching file systems page %d for compartment: %s, AD: %s", pageCount, compartmentID, adName)
+			req := filestorage.ListFileSystemsRequest{
+				CompartmentId:      common.String(compartmentID),
+				AvailabilityDomain: common.String(adName),
+				Page:              page,
 			}
-			ocid := ""
-			if fileSystem.Id != nil {
-				ocid = *fileSystem.Id
+
+			resp, err := clients.FileStorageClient.ListFileSystems(ctx, req)
+			
+			if err != nil {
+				logger.Verbose("Error listing file systems in AD %s: %v", adName, err)
+				break // Continue with next AD instead of failing completely
 			}
-			
-			additionalInfo := make(map[string]interface{})
-			
-			// Add metered bytes (current storage usage)
-			if fileSystem.MeteredBytes != nil {
-				sizeInGB := float64(*fileSystem.MeteredBytes) / (1024 * 1024 * 1024)
-				additionalInfo["size_in_gb"] = fmt.Sprintf("%.2f", sizeInGB)
+
+			allFileSystems = append(allFileSystems, resp.Items...)
+
+			if resp.OpcNextPage == nil {
+				break
 			}
-			
-			// Add availability domain
-			if fileSystem.AvailabilityDomain != nil {
-				additionalInfo["availability_domain"] = *fileSystem.AvailabilityDomain
+			page = resp.OpcNextPage
+		}
+
+		// Process file systems found in this AD
+		for _, fileSystem := range allFileSystems {
+			if fileSystem.LifecycleState != filestorage.FileSystemSummaryLifecycleStateDeleted {
+				name := ""
+				if fileSystem.DisplayName != nil {
+					name = *fileSystem.DisplayName
+				}
+				ocid := ""
+				if fileSystem.Id != nil {
+					ocid = *fileSystem.Id
+				}
+				
+				additionalInfo := make(map[string]interface{})
+				
+				// Add metered bytes (current storage usage)
+				if fileSystem.MeteredBytes != nil {
+					sizeInGB := float64(*fileSystem.MeteredBytes) / (1024 * 1024 * 1024)
+					additionalInfo["size_in_gb"] = fmt.Sprintf("%.2f", sizeInGB)
+				}
+				
+				// Add availability domain
+				additionalInfo["availability_domain"] = adName
+				
+				resources = append(resources, createResourceInfo(ctx, "FileStorageSystem", name, ocid, compartmentID, additionalInfo, clients.CompartmentCache))
 			}
-			
-			resources = append(resources, createResourceInfo(ctx, "FileStorageSystem", name, ocid, compartmentID, additionalInfo, clients.CompartmentCache))
 		}
 	}
 
