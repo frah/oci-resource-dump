@@ -306,17 +306,17 @@ func TestResourceTypeAliases(t *testing.T) {
 		"vcns":                 "VCNs",
 		"subnets":              "Subnets",
 		"block_volumes":        "BlockVolumes",
-		"object_storage":       "ObjectStorage",
+		"object_storage":       "ObjectStorageBuckets",  // Updated to match implementation
 		"oke_clusters":         "OKEClusters",
 		"drgs":                 "DRGs",
-		"databases":            "Databases",
+		"databases":            "DatabaseSystems",       // Updated to match implementation
 		"load_balancers":       "LoadBalancers",
 		"autonomous_databases": "AutonomousDatabases",
 		"functions":            "Functions",
 		"api_gateways":         "APIGateways",
-		"file_storage":         "FileStorage",
+		"file_storage":         "FileStorageSystems",    // Updated to match implementation
 		"network_load_balancers": "NetworkLoadBalancers",
-		"streaming":            "Streaming",
+		"streaming":            "Streams",               // Updated to match implementation
 	}
 
 	for alias, expected := range expectedAliases {

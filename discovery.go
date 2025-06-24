@@ -22,9 +22,13 @@ import (
 	"github.com/oracle/oci-go-sdk/v65/streaming"
 )
 
-// createResourceInfo creates a ResourceInfo with compartment name resolution
+// createResourceInfo creates a ResourceInfo with optimized compartment name resolution
 func createResourceInfo(ctx context.Context, resourceType, resourceName, ocid, compartmentID string, additionalInfo map[string]interface{}, cache *CompartmentNameCache) ResourceInfo {
-	compartmentName := cache.GetCompartmentName(ctx, compartmentID)
+	// Optimized compartment name lookup with context timeout
+	ctxWithTimeout, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	
+	compartmentName := cache.GetCompartmentName(ctxWithTimeout, compartmentID)
 	
 	return ResourceInfo{
 		ResourceType:     resourceType,

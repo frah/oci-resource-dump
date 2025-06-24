@@ -31,16 +31,20 @@ var resourceTypeAliases = map[string]string{
 	"subnets":                 "Subnets",
 	"block_volumes":           "BlockVolumes",
 	"object_storage_buckets":  "ObjectStorageBuckets",
+	"object_storage":          "ObjectStorageBuckets",  // Short alias for compatibility
 	"oke_clusters":            "OKEClusters",
 	"load_balancers":          "LoadBalancers",
 	"database_systems":        "DatabaseSystems",
+	"databases":               "DatabaseSystems",        // Short alias for compatibility
 	"drgs":                    "DRGs",
 	"autonomous_databases":    "AutonomousDatabases",
 	"functions":               "Functions",
 	"api_gateways":            "APIGateways",
 	"file_storage_systems":    "FileStorageSystems",
+	"file_storage":            "FileStorageSystems",     // Short alias for compatibility
 	"network_load_balancers":  "NetworkLoadBalancers",
 	"streams":                 "Streams",
+	"streaming":               "Streams",                // Short alias for compatibility
 }
 
 // reverseResourceTypeAliases maps internal names to CLI-friendly names
@@ -279,7 +283,8 @@ func ParseResourceTypeList(input string) []string {
 	for _, t := range types {
 		trimmed := strings.TrimSpace(t)
 		if trimmed != "" {
-			result = append(result, trimmed)
+			// Normalize to lowercase for consistency
+			result = append(result, strings.ToLower(trimmed))
 		}
 	}
 	return result
