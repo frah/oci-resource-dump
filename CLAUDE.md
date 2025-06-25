@@ -35,7 +35,7 @@ oci-resource-dump/
 ├── main.go             # エントリーポイント・CLI引数処理
 ├── types.go            # 構造体定義・型定義
 ├── clients.go          # OCIクライアント管理・認証
-├── discovery.go        # リソース発見ロジック（15種類）
+├── discovery.go        # リソース発見ロジック（21種類）
 ├── logger.go           # ログ機能・レベル制御
 ├── progress.go         # プログレス表示・ETA計算
 ├── output.go           # 出力形式処理（JSON/CSV/TSV）
@@ -54,7 +54,7 @@ oci-resource-dump/
 ```
 
 ### Key Features
-- **15種類のリソースタイプ対応**: Compute, VCN, Subnet, Block Volume, Object Storage, OKE, DRG, Database, Load Balancer, Autonomous Database, Functions, API Gateway, File Storage, Network Load Balancer, Streaming
+- **21種類のリソースタイプ対応**: Compute, VCN, Subnet, Block Volume, Boot Volume, Block Volume Backup, Boot Volume Backup, Object Storage, OKE, DRG, Local Peering Gateway, Database, Exadata Infrastructure, Cloud Exadata Infrastructure, Load Balancer, Autonomous Database, Functions, API Gateway, File Storage, Network Load Balancer, Streaming
 - **積極的タイムアウト制御**: チャネルとゴルーチンによる精密な実行時間管理
 - **並行処理**: セマフォによる最大5コンパートメント同時処理
 - **エラー処理**: 指数バックオフ + ジッター機能付きリトライ機構
@@ -98,8 +98,13 @@ go build -o oci-resource-dump *.go
 
 # Filter options (Phase 2B)
 ./oci-resource-dump --compartments "ocid1.compartment.oc1..prod,ocid1.compartment.oc1..staging"
-./oci-resource-dump --resource-types "compute_instances,vcns"
+./oci-resource-dump --resource-types "ComputeInstances,VCNs"
 ./oci-resource-dump --name-filter "^prod-.*" --exclude-name-filter "test-.*"
+
+# New resource types (Phase 3)
+./oci-resource-dump --resource-types "BootVolumes,LocalPeeringGateways"
+./oci-resource-dump --resource-types "ExadataInfrastructures,CloudExadataInfrastructures"
+./oci-resource-dump --resource-types "BlockVolumeBackups,BootVolumeBackups"
 
 # Diff analysis (Phase 2C)
 ./oci-resource-dump --compare-files old.json,new.json --diff-format text
@@ -144,11 +149,15 @@ go build -o oci-resource-dump *.go
 - Virtual Cloud Networks (CIDR、DNS設定)
 - Subnets (CIDR、可用性ドメイン)
 - Block Volumes (サイズ、パフォーマンスティア)
+- Boot Volumes (サイズ、VPUs/GB、可用性ドメイン)
 - Dynamic Routing Gateways
+- Local Peering Gateways (VCN ID、ピアリング状態、ルートテーブル)
 
-#### Storage & Object Services
+#### Storage & Backup Services
 - Object Storage Buckets (ストレージティア)
 - File Storage Service (容量、パフォーマンス設定)
+- Block Volume Backups (サイズ、ソースボリューム、作成時刻)
+- Boot Volume Backups (サイズ、ソースボリューム、作成時刻)
 
 #### Container & Compute Services
 - Oracle Kubernetes Engine Clusters (Kubernetesバージョン)
@@ -157,6 +166,8 @@ go build -o oci-resource-dump *.go
 #### Database Services
 - Database Systems (形状、エディション)
 - Autonomous Databases (ワークロードタイプ、CPU/ストレージ設定)
+- Exadata Infrastructures (シェイプ、コンピュート/ストレージ数、制御プレーン情報)
+- Cloud Exadata Infrastructures (シェイプ、コンピュート/ストレージ数、可用性ドメイン)
 
 #### Networking & Load Balancing
 - Load Balancers (形状、IPアドレス)
@@ -172,7 +183,7 @@ go build -o oci-resource-dump *.go
 - [x] **モジュラー設計**: 8ファイル構成による高保守性アーキテクチャ
 - [x] **基本リソース発見**: Compute, VCN, Subnet, Block Volume
 - [x] **拡張リソース発見**: Object Storage, OKE, Load Balancer, Database, DRG
-- [x] **全15リソースタイプ**: Autonomous DB, Functions, API Gateway, FSS, NLB, Streaming含む
+- [x] **全21リソースタイプ**: Boot Volume, Volume Backups, LPG, Exadata含む従来15種類+新規6種類
 - [x] **付加情報機能**: 各リソースタイプ固有の詳細情報出力
 - [x] **複数出力形式**: JSON, CSV, TSV対応
 - [x] **ページネーション**: 全リソースタイプでの完全実装
@@ -189,15 +200,28 @@ go build -o oci-resource-dump *.go
 
 ### 🎯 Current Status
 - **コード品質**: 本番環境対応完了
-- **テスト**: 全機能の検証済み
-- **ドキュメント**: 詳細実装ログ完備（Phase 2A/2B/2C）
-- **パフォーマンス**: 大規模環境対応済み
-- **企業機能**: 設定管理・フィルタリング・差分分析完備
+- **テスト**: 全機能の検証済み（Phase 1-3）
+- **ドキュメント**: 詳細実装ログ完備（Phase 1-3）
+- **パフォーマンス**: 大規模環境対応済み（21リソースタイプ）
+- **企業機能**: 設定管理・フィルタリング・差分分析・リソース拡張完備
+- **ユーザビリティ**: グループ化されたヘルプ出力とCobraベースCLI
 
 ### ✅ Completed Features (Phase 2D: Quality Assurance)
 - [x] **ユニットテスト実装**: 全8モジュールの包括的テストスイート
 - [x] **テストカバレッジ測定**: 80%以上のカバレッジ達成
 - [x] **ディレクトリ構造整理**: docs/・test/フォルダによる組織化
+
+### ✅ Completed Features (Phase 3: Resource Type Extension)
+- [x] **ヘルプ出力のグループ分け**: Cobraライブラリを使用したCLIオプションの分類表示（Issue #5）
+- [x] **新規リソースタイプ追加**: 6つの追加OCIリソースタイプをサポート（Issue #6）
+  - [x] **BootVolume**: ブートボリューム（サイズ、VPUs、可用性ドメイン情報）
+  - [x] **BootVolumeBackup**: ブートボリュームバックアップ（サイズ、ソースボリューム、作成時刻情報）
+  - [x] **BlockVolumeBackup**: ブロックボリュームバックアップ（サイズ、ソースボリューム、作成時刻情報）
+  - [x] **LocalPeeringGateway**: ローカルピアリングゲートウェイ（VCN、ピアリング状態、ルートテーブル情報）
+  - [x] **ExadataInfrastructure**: Exadataインフラストラクチャ（シェイプ、コンピュート/ストレージ数情報）
+  - [x] **CloudExadataInfrastructure**: クラウドExadataインフラストラクチャ（シェイプ、コンピュート/ストレージ数、可用性ドメイン情報）
+- [x] **進捗トラッキング更新**: 発見対象リソースタイプ数を15から21に増加
+- [x] **完全な後方互換性**: 既存機能・フィルタリング・出力形式への影響なし
 
 ### 🔄 Optional Enhancements
 - [ ] 統計レポート機能（簡素版）
