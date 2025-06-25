@@ -1164,7 +1164,7 @@ func discoverAllResourcesWithProgress(ctx context.Context, clients *OCIClients, 
 	// Update progress tracker with compartment count
 	if progressTracker != nil {
 		progressTracker.totalCompartments = int64(len(filteredCompartments))
-		progressTracker.totalResourceTypes = 15 // Number of resource types we discover
+		progressTracker.totalResourceTypes = 21 // Number of resource types we discover
 		progressTracker.Start()
 		defer progressTracker.Stop()
 	}
@@ -1177,21 +1177,27 @@ func discoverAllResourcesWithProgress(ctx context.Context, clients *OCIClients, 
 
 	// Discovery functions map
 	discoveryFuncs := map[string]func(context.Context, *OCIClients, string) ([]ResourceInfo, error){
-		"ComputeInstances":     discoverComputeInstances,
-		"VCNs":                 discoverVCNs,
-		"Subnets":              discoverSubnets,
-		"BlockVolumes":         discoverBlockVolumes,
-		"ObjectStorageBuckets": discoverObjectStorageBuckets,
-		"OKEClusters":          discoverOKEClusters,
-		"LoadBalancers":        discoverLoadBalancers,
-		"DatabaseSystems":      discoverDatabases,
-		"DRGs":                 discoverDRGs,
-		"AutonomousDatabases":  discoverAutonomousDatabases,
-		"Functions":            discoverFunctions,
-		"APIGateways":          discoverAPIGateways,
-		"FileStorageSystems":   discoverFileStorageSystems,
-		"NetworkLoadBalancers": discoverNetworkLoadBalancers,
-		"Streams":              discoverStreams,
+		"ComputeInstances":            discoverComputeInstances,
+		"VCNs":                        discoverVCNs,
+		"Subnets":                     discoverSubnets,
+		"BlockVolumes":                discoverBlockVolumes,
+		"BootVolumes":                 discoverBootVolumes,
+		"BlockVolumeBackups":          discoverBlockVolumeBackups,
+		"BootVolumeBackups":           discoverBootVolumeBackups,
+		"ObjectStorageBuckets":        discoverObjectStorageBuckets,
+		"OKEClusters":                 discoverOKEClusters,
+		"LoadBalancers":               discoverLoadBalancers,
+		"DatabaseSystems":             discoverDatabases,
+		"DRGs":                        discoverDRGs,
+		"LocalPeeringGateways":        discoverLocalPeeringGateways,
+		"AutonomousDatabases":         discoverAutonomousDatabases,
+		"ExadataInfrastructures":      discoverExadataInfrastructures,
+		"CloudExadataInfrastructures": discoverCloudExadataInfrastructures,
+		"Functions":                   discoverFunctions,
+		"APIGateways":                 discoverAPIGateways,
+		"FileStorageSystems":          discoverFileStorageSystems,
+		"NetworkLoadBalancers":        discoverNetworkLoadBalancers,
+		"Streams":                     discoverStreams,
 	}
 
 	for _, compartment := range filteredCompartments {
@@ -1311,4 +1317,431 @@ func discoverAllResourcesWithProgress(ctx context.Context, clients *OCIClients, 
 	logger.Info("Resource discovery completed. Found %d resources across %d compartments", len(allResources), len(compartments))
 
 	return allResources, nil
+}
+
+// discoverBootVolumes discovers all boot volumes in a compartment
+func discoverBootVolumes(ctx context.Context, clients *OCIClients, compartmentID string) ([]ResourceInfo, error) {
+	var resources []ResourceInfo
+	var allBootVolumes []core.BootVolume
+
+	logger.Debug("Starting boot volume discovery for compartment: %s", compartmentID)
+
+	// Implement pagination to get all boot volumes
+	var page *string
+	pageCount := 0
+	for {
+		pageCount++
+		logger.Debug("Fetching boot volumes page %d for compartment: %s", pageCount, compartmentID)
+		req := core.ListBootVolumesRequest{
+			CompartmentId: common.String(compartmentID),
+			Page:          page,
+		}
+
+		resp, err := clients.BlockStorageClient.ListBootVolumes(ctx, req)
+
+		if err != nil {
+			return nil, err
+		}
+
+		allBootVolumes = append(allBootVolumes, resp.Items...)
+
+		if resp.OpcNextPage == nil {
+			break
+		}
+		page = resp.OpcNextPage
+	}
+
+	for _, bootVolume := range allBootVolumes {
+		if bootVolume.LifecycleState != core.BootVolumeLifecycleStateTerminated {
+			name := ""
+			if bootVolume.DisplayName != nil {
+				name = *bootVolume.DisplayName
+			}
+			ocid := ""
+			if bootVolume.Id != nil {
+				ocid = *bootVolume.Id
+			}
+
+			additionalInfo := make(map[string]interface{})
+
+			// Add size in GBs
+			if bootVolume.SizeInGBs != nil {
+				additionalInfo["size_in_gbs"] = *bootVolume.SizeInGBs
+			}
+
+			// Add volume performance (VPUs per GB)
+			if bootVolume.VpusPerGB != nil {
+				additionalInfo["vpus_per_gb"] = *bootVolume.VpusPerGB
+			}
+
+			// Add availability domain
+			if bootVolume.AvailabilityDomain != nil {
+				additionalInfo["availability_domain"] = *bootVolume.AvailabilityDomain
+			}
+
+			resources = append(resources, createResourceInfo(ctx, "BootVolume", name, ocid, compartmentID, additionalInfo, clients.CompartmentCache))
+		}
+	}
+
+	logger.Verbose("Found %d boot volumes in compartment %s", len(resources), compartmentID)
+	return resources, nil
+}
+
+// discoverBootVolumeBackups discovers all boot volume backups in a compartment
+func discoverBootVolumeBackups(ctx context.Context, clients *OCIClients, compartmentID string) ([]ResourceInfo, error) {
+	var resources []ResourceInfo
+	var allBootVolumeBackups []core.BootVolumeBackup
+
+	logger.Debug("Starting boot volume backup discovery for compartment: %s", compartmentID)
+
+	// Implement pagination to get all boot volume backups
+	var page *string
+	pageCount := 0
+	for {
+		pageCount++
+		logger.Debug("Fetching boot volume backups page %d for compartment: %s", pageCount, compartmentID)
+		req := core.ListBootVolumeBackupsRequest{
+			CompartmentId: common.String(compartmentID),
+			Page:          page,
+		}
+
+		resp, err := clients.BlockStorageClient.ListBootVolumeBackups(ctx, req)
+
+		if err != nil {
+			return nil, err
+		}
+
+		allBootVolumeBackups = append(allBootVolumeBackups, resp.Items...)
+
+		if resp.OpcNextPage == nil {
+			break
+		}
+		page = resp.OpcNextPage
+	}
+
+	for _, backup := range allBootVolumeBackups {
+		if backup.LifecycleState != core.BootVolumeBackupLifecycleStateTerminated {
+			name := ""
+			if backup.DisplayName != nil {
+				name = *backup.DisplayName
+			}
+			ocid := ""
+			if backup.Id != nil {
+				ocid = *backup.Id
+			}
+
+			additionalInfo := make(map[string]interface{})
+
+			// Add size in GBs
+			if backup.SizeInGBs != nil {
+				additionalInfo["size_in_gbs"] = *backup.SizeInGBs
+			}
+
+			// Add source boot volume ID
+			if backup.BootVolumeId != nil {
+				additionalInfo["source_boot_volume_id"] = *backup.BootVolumeId
+			}
+
+			// Add backup type
+			additionalInfo["type"] = string(backup.Type)
+
+			// Add creation time
+			if backup.TimeCreated != nil {
+				additionalInfo["time_created"] = backup.TimeCreated.Format(time.RFC3339)
+			}
+
+			resources = append(resources, createResourceInfo(ctx, "BootVolumeBackup", name, ocid, compartmentID, additionalInfo, clients.CompartmentCache))
+		}
+	}
+
+	logger.Verbose("Found %d boot volume backups in compartment %s", len(resources), compartmentID)
+	return resources, nil
+}
+
+// discoverBlockVolumeBackups discovers all block volume backups in a compartment
+func discoverBlockVolumeBackups(ctx context.Context, clients *OCIClients, compartmentID string) ([]ResourceInfo, error) {
+	var resources []ResourceInfo
+	var allVolumeBackups []core.VolumeBackup
+
+	logger.Debug("Starting block volume backup discovery for compartment: %s", compartmentID)
+
+	// Implement pagination to get all volume backups
+	var page *string
+	pageCount := 0
+	for {
+		pageCount++
+		logger.Debug("Fetching block volume backups page %d for compartment: %s", pageCount, compartmentID)
+		req := core.ListVolumeBackupsRequest{
+			CompartmentId: common.String(compartmentID),
+			Page:          page,
+		}
+
+		resp, err := clients.BlockStorageClient.ListVolumeBackups(ctx, req)
+
+		if err != nil {
+			return nil, err
+		}
+
+		allVolumeBackups = append(allVolumeBackups, resp.Items...)
+
+		if resp.OpcNextPage == nil {
+			break
+		}
+		page = resp.OpcNextPage
+	}
+
+	for _, backup := range allVolumeBackups {
+		if backup.LifecycleState != core.VolumeBackupLifecycleStateTerminated {
+			name := ""
+			if backup.DisplayName != nil {
+				name = *backup.DisplayName
+			}
+			ocid := ""
+			if backup.Id != nil {
+				ocid = *backup.Id
+			}
+
+			additionalInfo := make(map[string]interface{})
+
+			// Add size in GBs
+			if backup.SizeInGBs != nil {
+				additionalInfo["size_in_gbs"] = *backup.SizeInGBs
+			}
+
+			// Add source volume ID
+			if backup.VolumeId != nil {
+				additionalInfo["source_volume_id"] = *backup.VolumeId
+			}
+
+			// Add backup type
+			additionalInfo["type"] = string(backup.Type)
+
+			// Add creation time
+			if backup.TimeCreated != nil {
+				additionalInfo["time_created"] = backup.TimeCreated.Format(time.RFC3339)
+			}
+
+			resources = append(resources, createResourceInfo(ctx, "BlockVolumeBackup", name, ocid, compartmentID, additionalInfo, clients.CompartmentCache))
+		}
+	}
+
+	logger.Verbose("Found %d block volume backups in compartment %s", len(resources), compartmentID)
+	return resources, nil
+}
+
+// discoverLocalPeeringGateways discovers all Local Peering Gateways in a compartment
+func discoverLocalPeeringGateways(ctx context.Context, clients *OCIClients, compartmentID string) ([]ResourceInfo, error) {
+	var resources []ResourceInfo
+	var allLPGs []core.LocalPeeringGateway
+
+	logger.Debug("Starting Local Peering Gateway discovery for compartment: %s", compartmentID)
+
+	// Implement pagination to get all Local Peering Gateways
+	var page *string
+	pageCount := 0
+	for {
+		pageCount++
+		logger.Debug("Fetching Local Peering Gateways page %d for compartment: %s", pageCount, compartmentID)
+		req := core.ListLocalPeeringGatewaysRequest{
+			CompartmentId: common.String(compartmentID),
+			Page:          page,
+		}
+
+		resp, err := clients.VirtualNetworkClient.ListLocalPeeringGateways(ctx, req)
+
+		if err != nil {
+			return nil, err
+		}
+
+		allLPGs = append(allLPGs, resp.Items...)
+
+		if resp.OpcNextPage == nil {
+			break
+		}
+		page = resp.OpcNextPage
+	}
+
+	for _, lpg := range allLPGs {
+		if lpg.LifecycleState != core.LocalPeeringGatewayLifecycleStateTerminated {
+			name := ""
+			if lpg.DisplayName != nil {
+				name = *lpg.DisplayName
+			}
+			ocid := ""
+			if lpg.Id != nil {
+				ocid = *lpg.Id
+			}
+
+			additionalInfo := make(map[string]interface{})
+
+			// Add VCN ID
+			if lpg.VcnId != nil {
+				additionalInfo["vcn_id"] = *lpg.VcnId
+			}
+
+			// Add peering status
+			additionalInfo["peering_status"] = string(lpg.PeeringStatus)
+
+			// Add peer advertised CIDR
+			if lpg.PeerAdvertisedCidr != nil {
+				additionalInfo["peer_advertised_cidr"] = *lpg.PeerAdvertisedCidr
+			}
+
+			// Add route table ID
+			if lpg.RouteTableId != nil {
+				additionalInfo["route_table_id"] = *lpg.RouteTableId
+			}
+
+			resources = append(resources, createResourceInfo(ctx, "LocalPeeringGateway", name, ocid, compartmentID, additionalInfo, clients.CompartmentCache))
+		}
+	}
+
+	logger.Verbose("Found %d Local Peering Gateways in compartment %s", len(resources), compartmentID)
+	return resources, nil
+}
+
+// discoverExadataInfrastructures discovers all Exadata Infrastructures in a compartment
+func discoverExadataInfrastructures(ctx context.Context, clients *OCIClients, compartmentID string) ([]ResourceInfo, error) {
+	var resources []ResourceInfo
+	var allExadataInfrastructures []database.ExadataInfrastructureSummary
+
+	logger.Debug("Starting Exadata Infrastructure discovery for compartment: %s", compartmentID)
+
+	// Implement pagination to get all Exadata Infrastructures
+	var page *string
+	pageCount := 0
+	for {
+		pageCount++
+		logger.Debug("Fetching Exadata Infrastructures page %d for compartment: %s", pageCount, compartmentID)
+		req := database.ListExadataInfrastructuresRequest{
+			CompartmentId: common.String(compartmentID),
+			Page:          page,
+		}
+
+		resp, err := clients.DatabaseClient.ListExadataInfrastructures(ctx, req)
+
+		if err != nil {
+			return nil, err
+		}
+
+		allExadataInfrastructures = append(allExadataInfrastructures, resp.Items...)
+
+		if resp.OpcNextPage == nil {
+			break
+		}
+		page = resp.OpcNextPage
+	}
+
+	for _, exaInfra := range allExadataInfrastructures {
+		if string(exaInfra.LifecycleState) != "TERMINATED" {
+			name := ""
+			if exaInfra.DisplayName != nil {
+				name = *exaInfra.DisplayName
+			}
+			ocid := ""
+			if exaInfra.Id != nil {
+				ocid = *exaInfra.Id
+			}
+
+			additionalInfo := make(map[string]interface{})
+
+			// Add shape
+			if exaInfra.Shape != nil {
+				additionalInfo["shape"] = *exaInfra.Shape
+			}
+
+			// Add compute count
+			if exaInfra.ComputeCount != nil {
+				additionalInfo["compute_count"] = *exaInfra.ComputeCount
+			}
+
+			// Add storage count
+			if exaInfra.StorageCount != nil {
+				additionalInfo["storage_count"] = *exaInfra.StorageCount
+			}
+
+			// Add cloud control plane server version
+			if exaInfra.CloudControlPlaneServer1 != nil {
+				additionalInfo["cloud_control_plane_server1"] = *exaInfra.CloudControlPlaneServer1
+			}
+
+			resources = append(resources, createResourceInfo(ctx, "ExadataInfrastructure", name, ocid, compartmentID, additionalInfo, clients.CompartmentCache))
+		}
+	}
+
+	logger.Verbose("Found %d Exadata Infrastructures in compartment %s", len(resources), compartmentID)
+	return resources, nil
+}
+
+// discoverCloudExadataInfrastructures discovers all Cloud Exadata Infrastructures in a compartment
+func discoverCloudExadataInfrastructures(ctx context.Context, clients *OCIClients, compartmentID string) ([]ResourceInfo, error) {
+	var resources []ResourceInfo
+	var allCloudExadataInfrastructures []database.CloudExadataInfrastructureSummary
+
+	logger.Debug("Starting Cloud Exadata Infrastructure discovery for compartment: %s", compartmentID)
+
+	// Implement pagination to get all Cloud Exadata Infrastructures
+	var page *string
+	pageCount := 0
+	for {
+		pageCount++
+		logger.Debug("Fetching Cloud Exadata Infrastructures page %d for compartment: %s", pageCount, compartmentID)
+		req := database.ListCloudExadataInfrastructuresRequest{
+			CompartmentId: common.String(compartmentID),
+			Page:          page,
+		}
+
+		resp, err := clients.DatabaseClient.ListCloudExadataInfrastructures(ctx, req)
+
+		if err != nil {
+			return nil, err
+		}
+
+		allCloudExadataInfrastructures = append(allCloudExadataInfrastructures, resp.Items...)
+
+		if resp.OpcNextPage == nil {
+			break
+		}
+		page = resp.OpcNextPage
+	}
+
+	for _, cloudExaInfra := range allCloudExadataInfrastructures {
+		if string(cloudExaInfra.LifecycleState) != "TERMINATED" {
+			name := ""
+			if cloudExaInfra.DisplayName != nil {
+				name = *cloudExaInfra.DisplayName
+			}
+			ocid := ""
+			if cloudExaInfra.Id != nil {
+				ocid = *cloudExaInfra.Id
+			}
+
+			additionalInfo := make(map[string]interface{})
+
+			// Add shape
+			if cloudExaInfra.Shape != nil {
+				additionalInfo["shape"] = *cloudExaInfra.Shape
+			}
+
+			// Add compute count
+			if cloudExaInfra.ComputeCount != nil {
+				additionalInfo["compute_count"] = *cloudExaInfra.ComputeCount
+			}
+
+			// Add storage count
+			if cloudExaInfra.StorageCount != nil {
+				additionalInfo["storage_count"] = *cloudExaInfra.StorageCount
+			}
+
+			// Add availability domain
+			if cloudExaInfra.AvailabilityDomain != nil {
+				additionalInfo["availability_domain"] = *cloudExaInfra.AvailabilityDomain
+			}
+
+			resources = append(resources, createResourceInfo(ctx, "CloudExadataInfrastructure", name, ocid, compartmentID, additionalInfo, clients.CompartmentCache))
+		}
+	}
+
+	logger.Verbose("Found %d Cloud Exadata Infrastructures in compartment %s", len(resources), compartmentID)
+	return resources, nil
 }
