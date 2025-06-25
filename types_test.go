@@ -10,8 +10,8 @@ import (
 
 func TestResourceInfo_JSONSerialization(t *testing.T) {
 	original := ResourceInfo{
-		ResourceType:   "ComputeInstance",
-		ResourceName:   "test-instance",
+		ResourceType:  "ComputeInstance",
+		ResourceName:  "test-instance",
 		OCID:          "ocid1.instance.oc1..test1",
 		CompartmentID: "ocid1.compartment.oc1..test",
 		AdditionalInfo: map[string]interface{}{
@@ -75,8 +75,8 @@ func TestResourceInfo_EmptyAdditionalInfo(t *testing.T) {
 			resource := ResourceInfo{
 				ResourceType:   "VCN",
 				ResourceName:   "test-vcn",
-				OCID:          "ocid1.vcn.oc1..test1",
-				CompartmentID: "ocid1.compartment.oc1..test",
+				OCID:           "ocid1.vcn.oc1..test1",
+				CompartmentID:  "ocid1.compartment.oc1..test",
 				AdditionalInfo: tt.additionalInfo,
 			}
 
@@ -107,7 +107,7 @@ func TestCompartmentID_Validation(t *testing.T) {
 		"ocid1.compartment.oc1..test1",
 		"ocid1.compartment.oc1.region.test2",
 	}
-	
+
 	invalidIDs := []string{
 		"",
 		"invalid-id",
@@ -224,7 +224,7 @@ func TestModifiedResource_Structure(t *testing.T) {
 	newResource := ResourceInfo{
 		ResourceType: "ComputeInstance",
 		ResourceName: "new-name",
-		OCID:        "ocid1.instance.oc1..test1",
+		OCID:         "ocid1.instance.oc1..test1",
 	}
 
 	modified := ModifiedResource{
@@ -364,7 +364,7 @@ func TestResourceInfo_RequiredFields(t *testing.T) {
 	resource := ResourceInfo{
 		ResourceType:  "ComputeInstance",
 		ResourceName:  "test-instance",
-		OCID:         "ocid1.instance.oc1..test1",
+		OCID:          "ocid1.instance.oc1..test1",
 		CompartmentID: "ocid1.compartment.oc1..test",
 	}
 
@@ -390,7 +390,7 @@ func TestStructureConsistency(t *testing.T) {
 	resource := ResourceInfo{
 		ResourceType: "Test",
 		ResourceName: "test",
-		OCID:        "test-ocid",
+		OCID:         "test-ocid",
 	}
 
 	// ModifiedResource構造体はResourceInfoとChangesを持つ

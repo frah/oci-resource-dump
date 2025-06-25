@@ -13,15 +13,15 @@ func TestLoadResourcesFromFile_ValidFile(t *testing.T) {
 	// テストデータ作成
 	resources := []ResourceInfo{
 		{
-			ResourceType:    "ComputeInstance",
-			ResourceName:    "test-instance-01",
+			ResourceType:   "ComputeInstance",
+			ResourceName:   "test-instance-01",
 			OCID:           "ocid1.instance.oc1..test1",
 			CompartmentID:  "ocid1.compartment.oc1..test",
 			AdditionalInfo: map[string]interface{}{"shape": "VM.Standard2.1"},
 		},
 		{
-			ResourceType:    "VCN",
-			ResourceName:    "test-vcn",
+			ResourceType:   "VCN",
+			ResourceName:   "test-vcn",
 			OCID:           "ocid1.vcn.oc1..test1",
 			CompartmentID:  "ocid1.compartment.oc1..test",
 			AdditionalInfo: map[string]interface{}{"cidr_block": "10.0.0.0/16"},
@@ -87,11 +87,11 @@ func TestLoadResourcesFromFile_InvalidJSON(t *testing.T) {
 func TestCreateResourceMap(t *testing.T) {
 	resources := []ResourceInfo{
 		{
-			OCID: "ocid1.instance.oc1..test1",
+			OCID:         "ocid1.instance.oc1..test1",
 			ResourceName: "instance-1",
 		},
 		{
-			OCID: "ocid1.vcn.oc1..test1",
+			OCID:         "ocid1.vcn.oc1..test1",
 			ResourceName: "vcn-1",
 		},
 	}
@@ -192,8 +192,8 @@ func TestFindModifiedResources(t *testing.T) {
 
 func TestCompareResourceDetails(t *testing.T) {
 	old := ResourceInfo{
-		ResourceName:   "instance-1",
-		ResourceType:   "ComputeInstance",
+		ResourceName:  "instance-1",
+		ResourceType:  "ComputeInstance",
 		OCID:          "ocid1.instance.oc1..test1",
 		CompartmentID: "ocid1.compartment.oc1..test",
 		AdditionalInfo: map[string]interface{}{
@@ -203,8 +203,8 @@ func TestCompareResourceDetails(t *testing.T) {
 	}
 
 	new := ResourceInfo{
-		ResourceName:   "instance-1-renamed",
-		ResourceType:   "ComputeInstance",
+		ResourceName:  "instance-1-renamed",
+		ResourceType:  "ComputeInstance",
 		OCID:          "ocid1.instance.oc1..test1",
 		CompartmentID: "ocid1.compartment.oc1..test",
 		AdditionalInfo: map[string]interface{}{
@@ -237,7 +237,7 @@ func TestCompareResourceDetails(t *testing.T) {
 			}
 		}
 	}
-	
+
 	if !foundNameChange {
 		t.Error("CompareResourceDetails() should detect ResourceName change")
 	}
@@ -320,8 +320,8 @@ func TestCompareDumps_SameFiles(t *testing.T) {
 	// 同一リソースデータ作成
 	resources := []ResourceInfo{
 		{
-			ResourceType:   "ComputeInstance",
-			ResourceName:   "test-instance",
+			ResourceType:  "ComputeInstance",
+			ResourceName:  "test-instance",
 			OCID:          "ocid1.instance.oc1..test1",
 			CompartmentID: "ocid1.compartment.oc1..test",
 		},
@@ -380,13 +380,13 @@ func TestCompareDumps_DifferentFiles(t *testing.T) {
 		{
 			ResourceType:   "ComputeInstance",
 			ResourceName:   "old-instance",
-			OCID:          "ocid1.instance.oc1..test1",
-			CompartmentID: "ocid1.compartment.oc1..test",
+			OCID:           "ocid1.instance.oc1..test1",
+			CompartmentID:  "ocid1.compartment.oc1..test",
 			AdditionalInfo: map[string]interface{}{"shape": "VM.Standard2.1"},
 		},
 		{
-			ResourceType:   "VCN",
-			ResourceName:   "shared-vcn",
+			ResourceType:  "VCN",
+			ResourceName:  "shared-vcn",
 			OCID:          "ocid1.vcn.oc1..test1",
 			CompartmentID: "ocid1.compartment.oc1..test",
 		},
@@ -396,19 +396,19 @@ func TestCompareDumps_DifferentFiles(t *testing.T) {
 		{
 			ResourceType:   "ComputeInstance",
 			ResourceName:   "new-instance",
-			OCID:          "ocid1.instance.oc1..test1",
-			CompartmentID: "ocid1.compartment.oc1..test",
+			OCID:           "ocid1.instance.oc1..test1",
+			CompartmentID:  "ocid1.compartment.oc1..test",
 			AdditionalInfo: map[string]interface{}{"shape": "VM.Standard2.2"},
 		},
 		{
-			ResourceType:   "VCN",
-			ResourceName:   "shared-vcn",
+			ResourceType:  "VCN",
+			ResourceName:  "shared-vcn",
 			OCID:          "ocid1.vcn.oc1..test1",
 			CompartmentID: "ocid1.compartment.oc1..test",
 		},
 		{
-			ResourceType:   "Subnet",
-			ResourceName:   "new-subnet",
+			ResourceType:  "Subnet",
+			ResourceName:  "new-subnet",
 			OCID:          "ocid1.subnet.oc1..test1",
 			CompartmentID: "ocid1.compartment.oc1..test",
 		},

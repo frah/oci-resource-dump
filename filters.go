@@ -26,44 +26,44 @@ type CompiledFilters struct {
 
 // supportedResourceTypes maps CLI-friendly names to internal resource type names
 var resourceTypeAliases = map[string]string{
-	"compute_instances":        "ComputeInstances",
-	"vcns":                    "VCNs",
-	"subnets":                 "Subnets",
-	"block_volumes":           "BlockVolumes",
-	"object_storage_buckets":  "ObjectStorageBuckets",
-	"object_storage":          "ObjectStorageBuckets",  // Short alias for compatibility
-	"oke_clusters":            "OKEClusters",
-	"load_balancers":          "LoadBalancers",
-	"database_systems":        "DatabaseSystems",
-	"databases":               "DatabaseSystems",        // Short alias for compatibility
-	"drgs":                    "DRGs",
-	"autonomous_databases":    "AutonomousDatabases",
-	"functions":               "Functions",
-	"api_gateways":            "APIGateways",
-	"file_storage_systems":    "FileStorageSystems",
-	"file_storage":            "FileStorageSystems",     // Short alias for compatibility
-	"network_load_balancers":  "NetworkLoadBalancers",
-	"streams":                 "Streams",
-	"streaming":               "Streams",                // Short alias for compatibility
+	"compute_instances":      "ComputeInstances",
+	"vcns":                   "VCNs",
+	"subnets":                "Subnets",
+	"block_volumes":          "BlockVolumes",
+	"object_storage_buckets": "ObjectStorageBuckets",
+	"object_storage":         "ObjectStorageBuckets", // Short alias for compatibility
+	"oke_clusters":           "OKEClusters",
+	"load_balancers":         "LoadBalancers",
+	"database_systems":       "DatabaseSystems",
+	"databases":              "DatabaseSystems", // Short alias for compatibility
+	"drgs":                   "DRGs",
+	"autonomous_databases":   "AutonomousDatabases",
+	"functions":              "Functions",
+	"api_gateways":           "APIGateways",
+	"file_storage_systems":   "FileStorageSystems",
+	"file_storage":           "FileStorageSystems", // Short alias for compatibility
+	"network_load_balancers": "NetworkLoadBalancers",
+	"streams":                "Streams",
+	"streaming":              "Streams", // Short alias for compatibility
 }
 
 // reverseResourceTypeAliases maps internal names to CLI-friendly names
 var reverseResourceTypeAliases = map[string]string{
-	"ComputeInstances":       "compute_instances",
-	"VCNs":                  "vcns",
-	"Subnets":               "subnets",
-	"BlockVolumes":          "block_volumes",
-	"ObjectStorageBuckets":  "object_storage_buckets",
-	"OKEClusters":           "oke_clusters",
-	"LoadBalancers":         "load_balancers",
-	"DatabaseSystems":       "database_systems",
-	"DRGs":                  "drgs",
-	"AutonomousDatabases":   "autonomous_databases",
-	"Functions":             "functions",
-	"APIGateways":           "api_gateways",
-	"FileStorageSystems":    "file_storage_systems",
-	"NetworkLoadBalancers":  "network_load_balancers",
-	"Streams":               "streams",
+	"ComputeInstances":     "compute_instances",
+	"VCNs":                 "vcns",
+	"Subnets":              "subnets",
+	"BlockVolumes":         "block_volumes",
+	"ObjectStorageBuckets": "object_storage_buckets",
+	"OKEClusters":          "oke_clusters",
+	"LoadBalancers":        "load_balancers",
+	"DatabaseSystems":      "database_systems",
+	"DRGs":                 "drgs",
+	"AutonomousDatabases":  "autonomous_databases",
+	"Functions":            "functions",
+	"APIGateways":          "api_gateways",
+	"FileStorageSystems":   "file_storage_systems",
+	"NetworkLoadBalancers": "network_load_balancers",
+	"Streams":              "streams",
 }
 
 // supportedResourceTypes contains all supported resource type names (internal format)
@@ -129,7 +129,7 @@ func ValidateFilterConfig(filter FilterConfig) error {
 // CompileFilters compiles regex patterns for efficient matching
 func CompileFilters(filter FilterConfig) (*CompiledFilters, error) {
 	compiled := &CompiledFilters{}
-	
+
 	if filter.NamePattern != "" {
 		regex, err := regexp.Compile(filter.NamePattern)
 		if err != nil {
@@ -137,7 +137,7 @@ func CompileFilters(filter FilterConfig) (*CompiledFilters, error) {
 		}
 		compiled.NameRegex = regex
 	}
-	
+
 	if filter.ExcludeNamePattern != "" {
 		regex, err := regexp.Compile(filter.ExcludeNamePattern)
 		if err != nil {
@@ -145,7 +145,7 @@ func CompileFilters(filter FilterConfig) (*CompiledFilters, error) {
 		}
 		compiled.ExcludeNameRegex = regex
 	}
-	
+
 	return compiled, nil
 }
 
@@ -159,21 +159,21 @@ func ApplyCompartmentFilter(compartments []identity.Compartment, filter FilterCo
 
 	for _, compartment := range compartments {
 		compartmentID := *compartment.Id
-		
+
 		// Apply include filter (if specified, only include compartments in the list)
 		if len(filter.IncludeCompartments) > 0 {
 			if !stringInSlice(compartmentID, filter.IncludeCompartments) {
 				continue // Skip this compartment
 			}
 		}
-		
+
 		// Apply exclude filter (skip compartments in the exclude list)
 		if len(filter.ExcludeCompartments) > 0 {
 			if stringInSlice(compartmentID, filter.ExcludeCompartments) {
 				continue // Skip this compartment
 			}
 		}
-		
+
 		filtered = append(filtered, compartment)
 	}
 
@@ -195,7 +195,7 @@ func ApplyResourceTypeFilter(resourceType string, filter FilterConfig) bool {
 			return false
 		}
 	}
-	
+
 	// Apply exclude filter (skip resource types in the exclude list)
 	if len(filter.ExcludeResourceTypes) > 0 {
 		for _, rt := range filter.ExcludeResourceTypes {
@@ -204,7 +204,7 @@ func ApplyResourceTypeFilter(resourceType string, filter FilterConfig) bool {
 			}
 		}
 	}
-	
+
 	return true
 }
 
@@ -216,14 +216,14 @@ func ApplyNameFilter(resourceName string, compiled *CompiledFilters) bool {
 			return false
 		}
 	}
-	
+
 	// Apply exclude name pattern (skip resources matching the exclude pattern)
 	if compiled.ExcludeNameRegex != nil {
 		if compiled.ExcludeNameRegex.MatchString(resourceName) {
 			return false
 		}
 	}
-	
+
 	return true
 }
 
@@ -277,7 +277,7 @@ func ParseResourceTypeList(input string) []string {
 	if input == "" {
 		return nil
 	}
-	
+
 	var result []string
 	types := strings.Split(input, ",")
 	for _, t := range types {
@@ -295,7 +295,7 @@ func ParseCompartmentList(input string) []string {
 	if input == "" {
 		return nil
 	}
-	
+
 	var result []string
 	ocids := strings.Split(input, ",")
 	for _, ocid := range ocids {

@@ -16,7 +16,7 @@ func TestCompartmentNameFilteringIntegration(t *testing.T) {
 		cache: make(map[string]string),
 		mu:    sync.RWMutex{},
 	}
-	
+
 	// Setup test compartment names
 	cache.cache["ocid1.compartment.oc1..prod123"] = "prod-compartment"
 	cache.cache["ocid1.compartment.oc1..dev456"] = "dev-compartment"
@@ -26,23 +26,23 @@ func TestCompartmentNameFilteringIntegration(t *testing.T) {
 
 	// Test that createResourceInfo correctly uses the cache
 	testCases := []struct {
-		name            string
-		compartmentID   string
+		name             string
+		compartmentID    string
 		expectedCompName string
 	}{
 		{
-			name:            "prod compartment",
-			compartmentID:   "ocid1.compartment.oc1..prod123",
+			name:             "prod compartment",
+			compartmentID:    "ocid1.compartment.oc1..prod123",
 			expectedCompName: "prod-compartment",
 		},
 		{
-			name:            "dev compartment",
-			compartmentID:   "ocid1.compartment.oc1..dev456",
+			name:             "dev compartment",
+			compartmentID:    "ocid1.compartment.oc1..dev456",
 			expectedCompName: "dev-compartment",
 		},
 		{
-			name:            "test compartment",
-			compartmentID:   "ocid1.compartment.oc1..test789",
+			name:             "test compartment",
+			compartmentID:    "ocid1.compartment.oc1..test789",
 			expectedCompName: "test-compartment",
 		},
 	}
@@ -116,8 +116,8 @@ func TestNameFilteringWithCompartmentNames(t *testing.T) {
 	}{
 		{"prod-web-server", true},
 		{"prod-database", true},
-		{"prod-server-test", false}, // matches exclude pattern
-		{"dev-web-server", false},   // doesn't match include pattern
+		{"prod-server-test", false},    // matches exclude pattern
+		{"dev-web-server", false},      // doesn't match include pattern
 		{"staging-prod-server", false}, // doesn't match include pattern (must start with prod-)
 	}
 

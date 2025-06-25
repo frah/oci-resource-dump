@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/oracle/oci-go-sdk/v65/common"
 	"github.com/oracle/oci-go-sdk/v65/apigateway"
+	"github.com/oracle/oci-go-sdk/v65/common"
 	"github.com/oracle/oci-go-sdk/v65/containerengine"
 	"github.com/oracle/oci-go-sdk/v65/core"
 	"github.com/oracle/oci-go-sdk/v65/database"
@@ -28,13 +28,13 @@ func createResourceInfo(ctx context.Context, resourceType, resourceName, ocid, c
 	// Optimized compartment name lookup with context timeout
 	ctxWithTimeout, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	
+
 	compartmentName := cache.GetCompartmentName(ctxWithTimeout, compartmentID)
-	
+
 	return ResourceInfo{
-		ResourceType:     resourceType,
-		CompartmentName:  compartmentName,
-		ResourceName:     resourceName,
+		ResourceType:    resourceType,
+		CompartmentName: compartmentName,
+		ResourceName:    resourceName,
 		OCID:            ocid,
 		CompartmentID:   compartmentID,
 		AdditionalInfo:  additionalInfo,
@@ -47,13 +47,13 @@ func isRetriableError(err error) bool {
 	if err == nil {
 		return false
 	}
-	
+
 	errStr := err.Error()
 	// Common OCI errors that should be treated as "resource not found" rather than fatal errors
 	return strings.Contains(errStr, "NotFound") ||
-		   strings.Contains(errStr, "NotAuthorized") ||
-		   strings.Contains(errStr, "Forbidden") ||
-		   strings.Contains(errStr, "does not exist")
+		strings.Contains(errStr, "NotAuthorized") ||
+		strings.Contains(errStr, "Forbidden") ||
+		strings.Contains(errStr, "does not exist")
 }
 
 // isTransientError checks if the error is transient and should be retried
@@ -61,18 +61,18 @@ func isTransientError(err error) bool {
 	if err == nil {
 		return false
 	}
-	
+
 	errStr := strings.ToLower(err.Error())
 	return strings.Contains(errStr, "timeout") ||
-		   strings.Contains(errStr, "connection reset") ||
-		   strings.Contains(errStr, "temporary failure") ||
-		   strings.Contains(errStr, "service unavailable") ||
-		   strings.Contains(errStr, "too many requests") ||
-		   strings.Contains(errStr, "rate limit") ||
-		   strings.Contains(errStr, "internal server error") ||
-		   strings.Contains(errStr, "502") ||
-		   strings.Contains(errStr, "503") ||
-		   strings.Contains(errStr, "504")
+		strings.Contains(errStr, "connection reset") ||
+		strings.Contains(errStr, "temporary failure") ||
+		strings.Contains(errStr, "service unavailable") ||
+		strings.Contains(errStr, "too many requests") ||
+		strings.Contains(errStr, "rate limit") ||
+		strings.Contains(errStr, "internal server error") ||
+		strings.Contains(errStr, "502") ||
+		strings.Contains(errStr, "503") ||
+		strings.Contains(errStr, "504")
 }
 
 // withRetryAndProgress executes an operation with retry logic and progress tracking
@@ -82,21 +82,21 @@ func withRetryAndProgress(ctx context.Context, operation func() error, maxRetrie
 		if err == nil {
 			return nil
 		}
-		
+
 		// Don't retry if the error is not transient
 		if !isTransientError(err) {
 			return err
 		}
-		
+
 		if attempt == maxRetries {
 			return fmt.Errorf("operation '%s' failed after %d attempts: %w", operationName, maxRetries+1, err)
 		}
-		
+
 		// Increment retry counter
 		if progressTracker != nil {
 			progressTracker.Update(ProgressUpdate{IsRetry: true})
 		}
-		
+
 		// Exponential backoff with jitter (up to 30 seconds max)
 		backoff := time.Duration(math.Min(math.Pow(2, float64(attempt)), 30)) * time.Second
 		jitter := time.Duration(float64(backoff) * 0.1 * (2*rand.Float64() - 1))
@@ -104,9 +104,9 @@ func withRetryAndProgress(ctx context.Context, operation func() error, maxRetrie
 		if sleepTime < 0 {
 			sleepTime = backoff
 		}
-		
+
 		logger.Verbose("Retrying %s in %v (attempt %d/%d): %v", operationName, sleepTime, attempt+1, maxRetries+1, err)
-		
+
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -127,7 +127,7 @@ func discoverComputeInstances(ctx context.Context, clients *OCIClients, compartm
 	var allInstances []core.Instance
 
 	logger.Debug("Starting compute instances discovery for compartment: %s", compartmentID)
-	
+
 	// Implement pagination to get all instances
 	var page *string
 	pageCount := 0
@@ -136,11 +136,11 @@ func discoverComputeInstances(ctx context.Context, clients *OCIClients, compartm
 		logger.Debug("Fetching compute instances page %d for compartment: %s", pageCount, compartmentID)
 		req := core.ListInstancesRequest{
 			CompartmentId: common.String(compartmentID),
-			Page:         page,
+			Page:          page,
 		}
 
 		resp, err := clients.ComputeClient.ListInstances(ctx, req)
-		
+
 		if err != nil {
 			return nil, err
 		}
@@ -163,16 +163,16 @@ func discoverComputeInstances(ctx context.Context, clients *OCIClients, compartm
 			if instance.Id != nil {
 				ocid = *instance.Id
 			}
-			
+
 			additionalInfo := make(map[string]interface{})
-			
+
 			// Get primary IP address
 			if instance.Id != nil {
 				vnicReq := core.ListVnicAttachmentsRequest{
 					CompartmentId: common.String(compartmentID),
 					InstanceId:    instance.Id,
 				}
-				
+
 				vnicResp, err := clients.ComputeClient.ListVnicAttachments(ctx, vnicReq)
 				if err == nil && len(vnicResp.Items) > 0 {
 					for _, vnicAttachment := range vnicResp.Items {
@@ -191,12 +191,12 @@ func discoverComputeInstances(ctx context.Context, clients *OCIClients, compartm
 					}
 				}
 			}
-			
+
 			// Add shape information
 			if instance.Shape != nil {
 				additionalInfo["shape"] = *instance.Shape
 			}
-			
+
 			resources = append(resources, createResourceInfo(ctx, "ComputeInstance", name, ocid, compartmentID, additionalInfo, clients.CompartmentCache))
 		}
 	}
@@ -211,7 +211,7 @@ func discoverVCNs(ctx context.Context, clients *OCIClients, compartmentID string
 	var allVcns []core.Vcn
 
 	logger.Debug("Starting VCN discovery for compartment: %s", compartmentID)
-	
+
 	// Implement pagination to get all VCNs
 	var page *string
 	pageCount := 0
@@ -220,11 +220,11 @@ func discoverVCNs(ctx context.Context, clients *OCIClients, compartmentID string
 		logger.Debug("Fetching VCNs page %d for compartment: %s", pageCount, compartmentID)
 		req := core.ListVcnsRequest{
 			CompartmentId: common.String(compartmentID),
-			Page:         page,
+			Page:          page,
 		}
 
 		resp, err := clients.VirtualNetworkClient.ListVcns(ctx, req)
-		
+
 		if err != nil {
 			return nil, err
 		}
@@ -247,19 +247,19 @@ func discoverVCNs(ctx context.Context, clients *OCIClients, compartmentID string
 			if vcn.Id != nil {
 				ocid = *vcn.Id
 			}
-			
+
 			additionalInfo := make(map[string]interface{})
-			
+
 			// Add CIDR blocks
 			if len(vcn.CidrBlocks) > 0 {
 				additionalInfo["cidr_blocks"] = vcn.CidrBlocks
 			}
-			
+
 			// Add DNS label
 			if vcn.DnsLabel != nil {
 				additionalInfo["dns_label"] = *vcn.DnsLabel
 			}
-			
+
 			resources = append(resources, createResourceInfo(ctx, "VCN", name, ocid, compartmentID, additionalInfo, clients.CompartmentCache))
 		}
 	}
@@ -274,7 +274,7 @@ func discoverSubnets(ctx context.Context, clients *OCIClients, compartmentID str
 	var allSubnets []core.Subnet
 
 	logger.Debug("Starting subnet discovery for compartment: %s", compartmentID)
-	
+
 	// Implement pagination to get all subnets
 	var page *string
 	pageCount := 0
@@ -283,11 +283,11 @@ func discoverSubnets(ctx context.Context, clients *OCIClients, compartmentID str
 		logger.Debug("Fetching subnets page %d for compartment: %s", pageCount, compartmentID)
 		req := core.ListSubnetsRequest{
 			CompartmentId: common.String(compartmentID),
-			Page:         page,
+			Page:          page,
 		}
 
 		resp, err := clients.VirtualNetworkClient.ListSubnets(ctx, req)
-		
+
 		if err != nil {
 			return nil, err
 		}
@@ -310,19 +310,19 @@ func discoverSubnets(ctx context.Context, clients *OCIClients, compartmentID str
 			if subnet.Id != nil {
 				ocid = *subnet.Id
 			}
-			
+
 			additionalInfo := make(map[string]interface{})
-			
+
 			// Add CIDR block
 			if subnet.CidrBlock != nil {
 				additionalInfo["cidr_block"] = *subnet.CidrBlock
 			}
-			
+
 			// Add availability domain
 			if subnet.AvailabilityDomain != nil {
 				additionalInfo["availability_domain"] = *subnet.AvailabilityDomain
 			}
-			
+
 			resources = append(resources, createResourceInfo(ctx, "Subnet", name, ocid, compartmentID, additionalInfo, clients.CompartmentCache))
 		}
 	}
@@ -337,7 +337,7 @@ func discoverBlockVolumes(ctx context.Context, clients *OCIClients, compartmentI
 	var allVolumes []core.Volume
 
 	logger.Debug("Starting block volume discovery for compartment: %s", compartmentID)
-	
+
 	// Implement pagination to get all volumes
 	var page *string
 	pageCount := 0
@@ -346,11 +346,11 @@ func discoverBlockVolumes(ctx context.Context, clients *OCIClients, compartmentI
 		logger.Debug("Fetching block volumes page %d for compartment: %s", pageCount, compartmentID)
 		req := core.ListVolumesRequest{
 			CompartmentId: common.String(compartmentID),
-			Page:         page,
+			Page:          page,
 		}
 
 		resp, err := clients.BlockStorageClient.ListVolumes(ctx, req)
-		
+
 		if err != nil {
 			return nil, err
 		}
@@ -373,19 +373,19 @@ func discoverBlockVolumes(ctx context.Context, clients *OCIClients, compartmentI
 			if volume.Id != nil {
 				ocid = *volume.Id
 			}
-			
+
 			additionalInfo := make(map[string]interface{})
-			
+
 			// Add size in GBs
 			if volume.SizeInGBs != nil {
 				additionalInfo["size_in_gbs"] = *volume.SizeInGBs
 			}
-			
+
 			// Add volume performance (VPUs per GB)
 			if volume.VpusPerGB != nil {
 				additionalInfo["vpus_per_gb"] = *volume.VpusPerGB
 			}
-			
+
 			resources = append(resources, createResourceInfo(ctx, "BlockVolume", name, ocid, compartmentID, additionalInfo, clients.CompartmentCache))
 		}
 	}
@@ -425,12 +425,12 @@ func discoverObjectStorageBuckets(ctx context.Context, clients *OCIClients, comp
 		if bucket.Name != nil {
 			name = *bucket.Name
 		}
-		
+
 		additionalInfo := make(map[string]interface{})
 		additionalInfo["namespace"] = namespace
-		
+
 		// Note: Storage tier is not available in BucketSummary
-		
+
 		// Note: Object Storage buckets don't have traditional OCIDs like other resources
 		// The bucket name serves as the identifier
 		resources = append(resources, createResourceInfo(ctx, "ObjectStorageBucket", name, fmt.Sprintf("bucket:%s:%s", namespace, name), compartmentID, additionalInfo, clients.CompartmentCache))
@@ -446,7 +446,7 @@ func discoverOKEClusters(ctx context.Context, clients *OCIClients, compartmentID
 	var allClusters []containerengine.ClusterSummary
 
 	logger.Debug("Starting OKE cluster discovery for compartment: %s", compartmentID)
-	
+
 	// Implement pagination to get all clusters
 	var page *string
 	pageCount := 0
@@ -455,11 +455,11 @@ func discoverOKEClusters(ctx context.Context, clients *OCIClients, compartmentID
 		logger.Debug("Fetching OKE clusters page %d for compartment: %s", pageCount, compartmentID)
 		req := containerengine.ListClustersRequest{
 			CompartmentId: common.String(compartmentID),
-			Page:         page,
+			Page:          page,
 		}
 
 		resp, err := clients.ContainerEngineClient.ListClusters(ctx, req)
-		
+
 		if err != nil {
 			return nil, err
 		}
@@ -482,14 +482,14 @@ func discoverOKEClusters(ctx context.Context, clients *OCIClients, compartmentID
 			if cluster.Id != nil {
 				ocid = *cluster.Id
 			}
-			
+
 			additionalInfo := make(map[string]interface{})
-			
+
 			// Add Kubernetes version
 			if cluster.KubernetesVersion != nil {
 				additionalInfo["kubernetes_version"] = *cluster.KubernetesVersion
 			}
-			
+
 			resources = append(resources, createResourceInfo(ctx, "OKECluster", name, ocid, compartmentID, additionalInfo, clients.CompartmentCache))
 		}
 	}
@@ -504,7 +504,7 @@ func discoverLoadBalancers(ctx context.Context, clients *OCIClients, compartment
 	var allLoadBalancers []loadbalancer.LoadBalancer
 
 	logger.Debug("Starting load balancer discovery for compartment: %s", compartmentID)
-	
+
 	// Implement pagination to get all load balancers
 	var page *string
 	pageCount := 0
@@ -513,11 +513,11 @@ func discoverLoadBalancers(ctx context.Context, clients *OCIClients, compartment
 		logger.Debug("Fetching load balancers page %d for compartment: %s", pageCount, compartmentID)
 		req := loadbalancer.ListLoadBalancersRequest{
 			CompartmentId: common.String(compartmentID),
-			Page:         page,
+			Page:          page,
 		}
 
 		resp, err := clients.LoadBalancerClient.ListLoadBalancers(ctx, req)
-		
+
 		if err != nil {
 			return nil, err
 		}
@@ -540,14 +540,14 @@ func discoverLoadBalancers(ctx context.Context, clients *OCIClients, compartment
 			if lb.Id != nil {
 				ocid = *lb.Id
 			}
-			
+
 			additionalInfo := make(map[string]interface{})
-			
+
 			// Add shape
 			if lb.ShapeName != nil {
 				additionalInfo["shape"] = *lb.ShapeName
 			}
-			
+
 			// Add IP addresses
 			if len(lb.IpAddresses) > 0 {
 				var ipAddresses []string
@@ -558,7 +558,7 @@ func discoverLoadBalancers(ctx context.Context, clients *OCIClients, compartment
 				}
 				additionalInfo["ip_addresses"] = ipAddresses
 			}
-			
+
 			resources = append(resources, createResourceInfo(ctx, "LoadBalancer", name, ocid, compartmentID, additionalInfo, clients.CompartmentCache))
 		}
 	}
@@ -573,7 +573,7 @@ func discoverDatabases(ctx context.Context, clients *OCIClients, compartmentID s
 	var allDbSystems []database.DbSystemSummary
 
 	logger.Debug("Starting database system discovery for compartment: %s", compartmentID)
-	
+
 	// Implement pagination to get all database systems
 	var page *string
 	pageCount := 0
@@ -582,11 +582,11 @@ func discoverDatabases(ctx context.Context, clients *OCIClients, compartmentID s
 		logger.Debug("Fetching database systems page %d for compartment: %s", pageCount, compartmentID)
 		req := database.ListDbSystemsRequest{
 			CompartmentId: common.String(compartmentID),
-			Page:         page,
+			Page:          page,
 		}
 
 		resp, err := clients.DatabaseClient.ListDbSystems(ctx, req)
-		
+
 		if err != nil {
 			return nil, err
 		}
@@ -609,18 +609,18 @@ func discoverDatabases(ctx context.Context, clients *OCIClients, compartmentID s
 			if dbSystem.Id != nil {
 				ocid = *dbSystem.Id
 			}
-			
+
 			additionalInfo := make(map[string]interface{})
-			
+
 			// Add shape
 			if dbSystem.Shape != nil {
 				additionalInfo["shape"] = *dbSystem.Shape
 			}
-			
+
 			// Add database edition
 			additionalInfo["database_edition"] = string(dbSystem.DatabaseEdition)
-			
-			resources = append(resources, createResourceInfo(ctx, 
+
+			resources = append(resources, createResourceInfo(ctx,
 				"DatabaseSystem", name, ocid, compartmentID, additionalInfo, clients.CompartmentCache))
 		}
 	}
@@ -635,7 +635,7 @@ func discoverDRGs(ctx context.Context, clients *OCIClients, compartmentID string
 	var allDrgs []core.Drg
 
 	logger.Debug("Starting DRG discovery for compartment: %s", compartmentID)
-	
+
 	// Implement pagination to get all DRGs
 	var page *string
 	pageCount := 0
@@ -644,11 +644,11 @@ func discoverDRGs(ctx context.Context, clients *OCIClients, compartmentID string
 		logger.Debug("Fetching DRGs page %d for compartment: %s", pageCount, compartmentID)
 		req := core.ListDrgsRequest{
 			CompartmentId: common.String(compartmentID),
-			Page:         page,
+			Page:          page,
 		}
 
 		resp, err := clients.VirtualNetworkClient.ListDrgs(ctx, req)
-		
+
 		if err != nil {
 			return nil, err
 		}
@@ -671,9 +671,9 @@ func discoverDRGs(ctx context.Context, clients *OCIClients, compartmentID string
 			if drg.Id != nil {
 				ocid = *drg.Id
 			}
-			
+
 			additionalInfo := make(map[string]interface{})
-			
+
 			resources = append(resources, createResourceInfo(ctx, "DRG", name, ocid, compartmentID, additionalInfo, clients.CompartmentCache))
 		}
 	}
@@ -688,7 +688,7 @@ func discoverAutonomousDatabases(ctx context.Context, clients *OCIClients, compa
 	var allAutonomousDBs []database.AutonomousDatabaseSummary
 
 	logger.Debug("Starting autonomous database discovery for compartment: %s", compartmentID)
-	
+
 	// Implement pagination to get all autonomous databases
 	var page *string
 	pageCount := 0
@@ -697,11 +697,11 @@ func discoverAutonomousDatabases(ctx context.Context, clients *OCIClients, compa
 		logger.Debug("Fetching autonomous databases page %d for compartment: %s", pageCount, compartmentID)
 		req := database.ListAutonomousDatabasesRequest{
 			CompartmentId: common.String(compartmentID),
-			Page:         page,
+			Page:          page,
 		}
 
 		resp, err := clients.DatabaseClient.ListAutonomousDatabases(ctx, req)
-		
+
 		if err != nil {
 			return nil, err
 		}
@@ -724,22 +724,22 @@ func discoverAutonomousDatabases(ctx context.Context, clients *OCIClients, compa
 			if autonomousDB.Id != nil {
 				ocid = *autonomousDB.Id
 			}
-			
+
 			additionalInfo := make(map[string]interface{})
-			
+
 			// Add workload type
 			additionalInfo["workload_type"] = string(autonomousDB.DbWorkload)
-			
+
 			// Add CPU core count
 			if autonomousDB.CpuCoreCount != nil {
 				additionalInfo["cpu_core_count"] = *autonomousDB.CpuCoreCount
 			}
-			
+
 			// Add data storage size
 			if autonomousDB.DataStorageSizeInTBs != nil {
 				additionalInfo["data_storage_size_in_tbs"] = *autonomousDB.DataStorageSizeInTBs
 			}
-			
+
 			resources = append(resources, createResourceInfo(ctx, "AutonomousDatabase", name, ocid, compartmentID, additionalInfo, clients.CompartmentCache))
 		}
 	}
@@ -763,11 +763,11 @@ func discoverFunctions(ctx context.Context, clients *OCIClients, compartmentID s
 		logger.Debug("Fetching function applications page %d for compartment: %s", pageCount, compartmentID)
 		req := functions.ListApplicationsRequest{
 			CompartmentId: common.String(compartmentID),
-			Page:         page,
+			Page:          page,
 		}
 
 		resp, err := clients.FunctionsClient.ListApplications(ctx, req)
-		
+
 		if err != nil {
 			return nil, err
 		}
@@ -791,11 +791,11 @@ func discoverFunctions(ctx context.Context, clients *OCIClients, compartmentID s
 				logger.Debug("Fetching functions for application %s, page %d", *app.DisplayName, funcPageCount)
 				funcReq := functions.ListFunctionsRequest{
 					ApplicationId: app.Id,
-					Page:         funcPage,
+					Page:          funcPage,
 				}
 
 				funcResp, err := clients.FunctionsClient.ListFunctions(ctx, funcReq)
-				
+
 				if err != nil {
 					logger.Verbose("Error listing functions for application %s: %v", *app.DisplayName, err)
 					break
@@ -819,24 +819,24 @@ func discoverFunctions(ctx context.Context, clients *OCIClients, compartmentID s
 					if function.Id != nil {
 						ocid = *function.Id
 					}
-					
+
 					additionalInfo := make(map[string]interface{})
-					
+
 					// Add application name
 					if app.DisplayName != nil {
 						additionalInfo["application_name"] = *app.DisplayName
 					}
-					
+
 					// Add runtime
 					if function.Image != nil {
 						additionalInfo["image"] = *function.Image
 					}
-					
+
 					// Add memory in MBs
 					if function.MemoryInMBs != nil {
 						additionalInfo["memory_in_mbs"] = *function.MemoryInMBs
 					}
-					
+
 					resources = append(resources, createResourceInfo(ctx, "Function", name, ocid, compartmentID, additionalInfo, clients.CompartmentCache))
 				}
 			}
@@ -853,7 +853,7 @@ func discoverAPIGateways(ctx context.Context, clients *OCIClients, compartmentID
 	var allGateways []apigateway.GatewaySummary
 
 	logger.Debug("Starting API gateway discovery for compartment: %s", compartmentID)
-	
+
 	// Implement pagination to get all API gateways
 	var page *string
 	pageCount := 0
@@ -862,11 +862,11 @@ func discoverAPIGateways(ctx context.Context, clients *OCIClients, compartmentID
 		logger.Debug("Fetching API gateways page %d for compartment: %s", pageCount, compartmentID)
 		req := apigateway.ListGatewaysRequest{
 			CompartmentId: common.String(compartmentID),
-			Page:         page,
+			Page:          page,
 		}
 
 		resp, err := clients.APIGatewayClient.ListGateways(ctx, req)
-		
+
 		if err != nil {
 			return nil, err
 		}
@@ -889,13 +889,13 @@ func discoverAPIGateways(ctx context.Context, clients *OCIClients, compartmentID
 			if gateway.Id != nil {
 				ocid = *gateway.Id
 			}
-			
+
 			additionalInfo := make(map[string]interface{})
-			
+
 			// Note: Endpoint is not available in GatewaySummary, would need to fetch gateway details
-			
+
 			// Note: Would need to use different API client to get deployment information
-			
+
 			resources = append(resources, createResourceInfo(ctx, "APIGateway", name, ocid, compartmentID, additionalInfo, clients.CompartmentCache))
 		}
 	}
@@ -907,7 +907,7 @@ func discoverAPIGateways(ctx context.Context, clients *OCIClients, compartmentID
 // getAvailabilityDomains retrieves all availability domains for a compartment
 func getAvailabilityDomains(ctx context.Context, clients *OCIClients, compartmentID string) ([]identity.AvailabilityDomain, error) {
 	logger.Debug("Getting availability domains for compartment: %s", compartmentID)
-	
+
 	req := identity.ListAvailabilityDomainsRequest{
 		CompartmentId: common.String(compartmentID),
 	}
@@ -926,7 +926,7 @@ func discoverFileStorageSystems(ctx context.Context, clients *OCIClients, compar
 	var resources []ResourceInfo
 
 	logger.Debug("Starting file storage system discovery for compartment: %s", compartmentID)
-	
+
 	// Get all availability domains for this compartment
 	availabilityDomains, err := getAvailabilityDomains(ctx, clients, compartmentID)
 	if err != nil {
@@ -943,7 +943,7 @@ func discoverFileStorageSystems(ctx context.Context, clients *OCIClients, compar
 		logger.Debug("Searching file systems in availability domain: %s", adName)
 
 		var allFileSystems []filestorage.FileSystemSummary
-		
+
 		// Implement pagination to get all file systems in this AD
 		var page *string
 		pageCount := 0
@@ -953,11 +953,11 @@ func discoverFileStorageSystems(ctx context.Context, clients *OCIClients, compar
 			req := filestorage.ListFileSystemsRequest{
 				CompartmentId:      common.String(compartmentID),
 				AvailabilityDomain: common.String(adName),
-				Page:              page,
+				Page:               page,
 			}
 
 			resp, err := clients.FileStorageClient.ListFileSystems(ctx, req)
-			
+
 			if err != nil {
 				logger.Verbose("Error listing file systems in AD %s: %v", adName, err)
 				break // Continue with next AD instead of failing completely
@@ -982,18 +982,18 @@ func discoverFileStorageSystems(ctx context.Context, clients *OCIClients, compar
 				if fileSystem.Id != nil {
 					ocid = *fileSystem.Id
 				}
-				
+
 				additionalInfo := make(map[string]interface{})
-				
+
 				// Add metered bytes (current storage usage)
 				if fileSystem.MeteredBytes != nil {
 					sizeInGB := float64(*fileSystem.MeteredBytes) / (1024 * 1024 * 1024)
 					additionalInfo["size_in_gb"] = fmt.Sprintf("%.2f", sizeInGB)
 				}
-				
+
 				// Add availability domain
 				additionalInfo["availability_domain"] = adName
-				
+
 				resources = append(resources, createResourceInfo(ctx, "FileStorageSystem", name, ocid, compartmentID, additionalInfo, clients.CompartmentCache))
 			}
 		}
@@ -1009,7 +1009,7 @@ func discoverNetworkLoadBalancers(ctx context.Context, clients *OCIClients, comp
 	var allNLBs []networkloadbalancer.NetworkLoadBalancerSummary
 
 	logger.Debug("Starting network load balancer discovery for compartment: %s", compartmentID)
-	
+
 	// Implement pagination to get all network load balancers
 	var page *string
 	pageCount := 0
@@ -1018,11 +1018,11 @@ func discoverNetworkLoadBalancers(ctx context.Context, clients *OCIClients, comp
 		logger.Debug("Fetching network load balancers page %d for compartment: %s", pageCount, compartmentID)
 		req := networkloadbalancer.ListNetworkLoadBalancersRequest{
 			CompartmentId: common.String(compartmentID),
-			Page:         page,
+			Page:          page,
 		}
 
 		resp, err := clients.NetworkLoadBalancerClient.ListNetworkLoadBalancers(ctx, req)
-		
+
 		if err != nil {
 			return nil, err
 		}
@@ -1045,11 +1045,11 @@ func discoverNetworkLoadBalancers(ctx context.Context, clients *OCIClients, comp
 			if nlb.Id != nil {
 				ocid = *nlb.Id
 			}
-			
+
 			additionalInfo := make(map[string]interface{})
-			
+
 			// Note: Health status not available in NetworkLoadBalancerSummary
-			
+
 			// Add IP addresses
 			if len(nlb.IpAddresses) > 0 {
 				var ipAddresses []string
@@ -1060,7 +1060,7 @@ func discoverNetworkLoadBalancers(ctx context.Context, clients *OCIClients, comp
 				}
 				additionalInfo["ip_addresses"] = ipAddresses
 			}
-			
+
 			resources = append(resources, createResourceInfo(ctx, "NetworkLoadBalancer", name, ocid, compartmentID, additionalInfo, clients.CompartmentCache))
 		}
 	}
@@ -1075,7 +1075,7 @@ func discoverStreams(ctx context.Context, clients *OCIClients, compartmentID str
 	var allStreams []streaming.StreamSummary
 
 	logger.Debug("Starting stream discovery for compartment: %s", compartmentID)
-	
+
 	// Implement pagination to get all streams
 	var page *string
 	pageCount := 0
@@ -1084,11 +1084,11 @@ func discoverStreams(ctx context.Context, clients *OCIClients, compartmentID str
 		logger.Debug("Fetching streams page %d for compartment: %s", pageCount, compartmentID)
 		req := streaming.ListStreamsRequest{
 			CompartmentId: common.String(compartmentID),
-			Page:         page,
+			Page:          page,
 		}
 
 		resp, err := clients.StreamingClient.ListStreams(ctx, req)
-		
+
 		if err != nil {
 			return nil, err
 		}
@@ -1111,14 +1111,14 @@ func discoverStreams(ctx context.Context, clients *OCIClients, compartmentID str
 			if stream.Id != nil {
 				ocid = *stream.Id
 			}
-			
+
 			additionalInfo := make(map[string]interface{})
-			
+
 			// Add partitions
 			if stream.Partitions != nil {
 				additionalInfo["partitions"] = *stream.Partitions
 			}
-			
+
 			// Get stream details for more information
 			if stream.Id != nil {
 				getReq := streaming.GetStreamRequest{
@@ -1132,7 +1132,7 @@ func discoverStreams(ctx context.Context, clients *OCIClients, compartmentID str
 					}
 				}
 			}
-			
+
 			resources = append(resources, createResourceInfo(ctx, "Stream", name, ocid, compartmentID, additionalInfo, clients.CompartmentCache))
 		}
 	}
@@ -1177,21 +1177,21 @@ func discoverAllResourcesWithProgress(ctx context.Context, clients *OCIClients, 
 
 	// Discovery functions map
 	discoveryFuncs := map[string]func(context.Context, *OCIClients, string) ([]ResourceInfo, error){
-		"ComputeInstances":      discoverComputeInstances,
-		"VCNs":                  discoverVCNs,
-		"Subnets":               discoverSubnets,
-		"BlockVolumes":          discoverBlockVolumes,
-		"ObjectStorageBuckets":  discoverObjectStorageBuckets,
-		"OKEClusters":           discoverOKEClusters,
-		"LoadBalancers":         discoverLoadBalancers,
-		"DatabaseSystems":       discoverDatabases,
-		"DRGs":                  discoverDRGs,
-		"AutonomousDatabases":   discoverAutonomousDatabases,
-		"Functions":             discoverFunctions,
-		"APIGateways":           discoverAPIGateways,
-		"FileStorageSystems":    discoverFileStorageSystems,
-		"NetworkLoadBalancers":  discoverNetworkLoadBalancers,
-		"Streams":               discoverStreams,
+		"ComputeInstances":     discoverComputeInstances,
+		"VCNs":                 discoverVCNs,
+		"Subnets":              discoverSubnets,
+		"BlockVolumes":         discoverBlockVolumes,
+		"ObjectStorageBuckets": discoverObjectStorageBuckets,
+		"OKEClusters":          discoverOKEClusters,
+		"LoadBalancers":        discoverLoadBalancers,
+		"DatabaseSystems":      discoverDatabases,
+		"DRGs":                 discoverDRGs,
+		"AutonomousDatabases":  discoverAutonomousDatabases,
+		"Functions":            discoverFunctions,
+		"APIGateways":          discoverAPIGateways,
+		"FileStorageSystems":   discoverFileStorageSystems,
+		"NetworkLoadBalancers": discoverNetworkLoadBalancers,
+		"Streams":              discoverStreams,
 	}
 
 	for _, compartment := range filteredCompartments {
@@ -1202,7 +1202,7 @@ func discoverAllResourcesWithProgress(ctx context.Context, clients *OCIClients, 
 		wg.Add(1)
 		go func(comp string, compName string) {
 			defer wg.Done()
-			
+
 			// Acquire semaphore
 			sem <- struct{}{}
 			defer func() { <-sem }()
@@ -1220,7 +1220,7 @@ func discoverAllResourcesWithProgress(ctx context.Context, clients *OCIClients, 
 				if progressTracker != nil {
 					progressTracker.Update(ProgressUpdate{
 						CompartmentName: compName,
-						Operation:      resourceType,
+						Operation:       resourceType,
 					})
 				}
 
@@ -1234,7 +1234,7 @@ func discoverAllResourcesWithProgress(ctx context.Context, clients *OCIClients, 
 				}
 
 				retryErr := withRetryAndProgress(ctx, operation, 3, fmt.Sprintf("%s in %s", resourceType, compName), progressTracker)
-				
+
 				if retryErr != nil {
 					if isRetriableError(retryErr) {
 						logger.Verbose("Skipping %s in compartment %s due to retriable error: %v", resourceType, compName, retryErr)
@@ -1269,12 +1269,12 @@ func discoverAllResourcesWithProgress(ctx context.Context, clients *OCIClients, 
 					mu.Lock()
 					allResources = append(allResources, filteredResources...)
 					mu.Unlock()
-					
+
 					if progressTracker != nil {
 						progressTracker.Update(ProgressUpdate{ResourceCount: int64(len(filteredResources))})
 					}
 				}
-				
+
 				if len(resources) > len(filteredResources) {
 					logger.Verbose("Filtered %d resources by name in %s %s", len(resources)-len(filteredResources), resourceType, compName)
 				}
@@ -1309,6 +1309,6 @@ func discoverAllResourcesWithProgress(ctx context.Context, clients *OCIClients, 
 	}
 
 	logger.Info("Resource discovery completed. Found %d resources across %d compartments", len(allResources), len(compartments))
-	
+
 	return allResources, nil
 }

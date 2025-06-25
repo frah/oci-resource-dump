@@ -21,7 +21,7 @@ func TestOutputFormat_Basic(t *testing.T) {
 		}
 	}
 
-	// 無効なフォーマットの基本テスト  
+	// 無効なフォーマットの基本テスト
 	for _, format := range invalidFormats {
 		found := false
 		for _, valid := range validFormats {
@@ -39,17 +39,17 @@ func TestOutputFormat_Basic(t *testing.T) {
 func TestOutputJSON(t *testing.T) {
 	resources := []ResourceInfo{
 		{
-			ResourceType:     "ComputeInstance",
-			CompartmentName:  "prod-compartment",
-			ResourceName:     "test-instance",
+			ResourceType:    "ComputeInstance",
+			CompartmentName: "prod-compartment",
+			ResourceName:    "test-instance",
 			OCID:            "ocid1.instance.oc1..test1",
 			CompartmentID:   "ocid1.compartment.oc1..test",
 			AdditionalInfo:  map[string]interface{}{"shape": "VM.Standard2.1"},
 		},
 		{
-			ResourceType:     "VCN",
-			CompartmentName:  "prod-compartment",
-			ResourceName:     "test-vcn",
+			ResourceType:    "VCN",
+			CompartmentName: "prod-compartment",
+			ResourceName:    "test-vcn",
 			OCID:            "ocid1.vcn.oc1..test1",
 			CompartmentID:   "ocid1.compartment.oc1..test",
 			AdditionalInfo:  map[string]interface{}{"cidr_block": "10.0.0.0/16"},
@@ -66,17 +66,17 @@ func TestOutputJSON(t *testing.T) {
 func TestOutputCSV(t *testing.T) {
 	resources := []ResourceInfo{
 		{
-			ResourceType:     "ComputeInstance",
-			CompartmentName:  "prod-compartment",
-			ResourceName:     "test-instance",
+			ResourceType:    "ComputeInstance",
+			CompartmentName: "prod-compartment",
+			ResourceName:    "test-instance",
 			OCID:            "ocid1.instance.oc1..test1",
 			CompartmentID:   "ocid1.compartment.oc1..test",
 			AdditionalInfo:  map[string]interface{}{"shape": "VM.Standard2.1"},
 		},
 		{
-			ResourceType:     "VCN",
-			CompartmentName:  "staging-compartment",
-			ResourceName:     "test-vcn with spaces",
+			ResourceType:    "VCN",
+			CompartmentName: "staging-compartment",
+			ResourceName:    "test-vcn with spaces",
 			OCID:            "ocid1.vcn.oc1..test1",
 			CompartmentID:   "ocid1.compartment.oc1..test",
 			AdditionalInfo:  map[string]interface{}{"cidr_block": "10.0.0.0/16"},
@@ -93,9 +93,9 @@ func TestOutputCSV(t *testing.T) {
 func TestOutputTSV(t *testing.T) {
 	resources := []ResourceInfo{
 		{
-			ResourceType:     "ComputeInstance",
-			CompartmentName:  "dev-compartment",
-			ResourceName:     "test-instance",
+			ResourceType:    "ComputeInstance",
+			CompartmentName: "dev-compartment",
+			ResourceName:    "test-instance",
 			OCID:            "ocid1.instance.oc1..test1",
 			CompartmentID:   "ocid1.compartment.oc1..test",
 			AdditionalInfo:  map[string]interface{}{"shape": "VM.Standard2.1"},
@@ -145,7 +145,7 @@ func TestFormatAdditionalInfo(t *testing.T) {
 			input: map[string]interface{}{
 				"shape": "VM.Standard2.1",
 			},
-			expected: "shape: VM.Standard2.1",  // Updated to match actual output format
+			expected: "shape: VM.Standard2.1", // Updated to match actual output format
 		},
 		{
 			name: "multiple key-values",
@@ -153,7 +153,7 @@ func TestFormatAdditionalInfo(t *testing.T) {
 				"shape":      "VM.Standard2.1",
 				"primary_ip": "10.0.1.10",
 			},
-			expected: "shape: VM.Standard2.1, primary_ip: 10.0.1.10",  // Updated to match actual output format
+			expected: "shape: VM.Standard2.1, primary_ip: 10.0.1.10", // Updated to match actual output format
 		},
 		{
 			name: "various types",
@@ -162,7 +162,7 @@ func TestFormatAdditionalInfo(t *testing.T) {
 				"enabled": true,
 				"name":    "test",
 			},
-			expected: "count: 5, enabled: true, name: test",  // Updated to match actual output format
+			expected: "count: 5, enabled: true, name: test", // Updated to match actual output format
 		},
 	}
 
@@ -180,7 +180,7 @@ func TestFormatAdditionalInfo(t *testing.T) {
 func TestEscaping_Basic(t *testing.T) {
 	// 基本的なエスケープが必要な文字のテスト
 	specialChars := []string{",", "\"", "\n", "\r", "\t"}
-	
+
 	for _, char := range specialChars {
 		if char == "" {
 			t.Error("Special character should not be empty")
@@ -192,17 +192,17 @@ func TestEscaping_Basic(t *testing.T) {
 func TestOutputJSONToFile(t *testing.T) {
 	resources := []ResourceInfo{
 		{
-			ResourceType:     "ComputeInstance",
-			CompartmentName:  "prod-compartment",
-			ResourceName:     "web-server-1",
+			ResourceType:    "ComputeInstance",
+			CompartmentName: "prod-compartment",
+			ResourceName:    "web-server-1",
 			OCID:            "ocid1.instance.oc1.ap-tokyo-1.test123",
 			CompartmentID:   "ocid1.compartment.oc1..test456",
 			AdditionalInfo:  map[string]interface{}{"shape": "VM.Standard2.1", "primary_ip": "10.0.1.10"},
 		},
 		{
-			ResourceType:     "VCN",
-			CompartmentName:  "staging-compartment",
-			ResourceName:     "main-vcn",
+			ResourceType:    "VCN",
+			CompartmentName: "staging-compartment",
+			ResourceName:    "main-vcn",
 			OCID:            "ocid1.vcn.oc1.ap-tokyo-1.test789",
 			CompartmentID:   "ocid1.compartment.oc1..test321",
 			AdditionalInfo:  map[string]interface{}{"cidr_block": "10.0.0.0/16", "dns_label": "mainvcn"},
@@ -266,9 +266,9 @@ func TestOutputJSONToFile(t *testing.T) {
 func TestOutputCSVToFile(t *testing.T) {
 	resources := []ResourceInfo{
 		{
-			ResourceType:     "LoadBalancer",
-			CompartmentName:  "infrastructure-compartment",
-			ResourceName:     "web-lb",
+			ResourceType:    "LoadBalancer",
+			CompartmentName: "infrastructure-compartment",
+			ResourceName:    "web-lb",
 			OCID:            "ocid1.loadbalancer.oc1.ap-tokyo-1.test123",
 			CompartmentID:   "ocid1.compartment.oc1..test456",
 			AdditionalInfo:  map[string]interface{}{"shape": "100Mbps", "ip_version": "IPv4"},
@@ -331,9 +331,9 @@ func TestOutputCSVToFile(t *testing.T) {
 func TestOutputTSVToFile(t *testing.T) {
 	resources := []ResourceInfo{
 		{
-			ResourceType:     "DatabaseSystem",
-			CompartmentName:  "database-compartment",
-			ResourceName:     "main-db",
+			ResourceType:    "DatabaseSystem",
+			CompartmentName: "database-compartment",
+			ResourceName:    "main-db",
 			OCID:            "ocid1.dbsystem.oc1.ap-tokyo-1.test123",
 			CompartmentID:   "ocid1.compartment.oc1..test456",
 			AdditionalInfo:  map[string]interface{}{"shape": "VM.Standard2.4", "edition": "ENTERPRISE_EDITION"},
@@ -369,7 +369,7 @@ func TestOutputTSVToFile(t *testing.T) {
 	// Validate header line
 	headerFields := strings.Split(lines[0], "\t")
 	expectedHeaders := []string{"ResourceType", "CompartmentName", "ResourceName", "OCID", "CompartmentID", "AdditionalInfo"}
-	
+
 	if len(headerFields) != len(expectedHeaders) {
 		t.Errorf("Expected %d header fields, got %d", len(expectedHeaders), len(headerFields))
 	}

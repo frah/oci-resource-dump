@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/oracle/oci-go-sdk/v65/apigateway"
 	"github.com/oracle/oci-go-sdk/v65/common"
 	"github.com/oracle/oci-go-sdk/v65/common/auth"
-	"github.com/oracle/oci-go-sdk/v65/apigateway"
 	"github.com/oracle/oci-go-sdk/v65/containerengine"
 	"github.com/oracle/oci-go-sdk/v65/core"
 	"github.com/oracle/oci-go-sdk/v65/database"
@@ -27,19 +27,19 @@ func initOCIClients(ctx context.Context) (*OCIClients, error) {
 		return nil, ctx.Err()
 	default:
 	}
-	
+
 	// Use instance principal authentication with timeout control
 	type configProviderResult struct {
 		provider common.ConfigurationProvider
 		err      error
 	}
 	configProviderChan := make(chan configProviderResult, 1)
-	
+
 	go func() {
 		provider, err := auth.InstancePrincipalConfigurationProvider()
 		configProviderChan <- configProviderResult{provider: provider, err: err}
 	}()
-	
+
 	var configProvider common.ConfigurationProvider
 	select {
 	case <-ctx.Done():
@@ -52,7 +52,7 @@ func initOCIClients(ctx context.Context) (*OCIClients, error) {
 	}
 
 	clients := &OCIClients{}
-	
+
 	// Helper function to initialize client with timeout
 	initClientWithTimeout := func(clientName string, initFunc func() (interface{}, error)) (interface{}, error) {
 		type clientResult struct {
@@ -60,12 +60,12 @@ func initOCIClients(ctx context.Context) (*OCIClients, error) {
 			err    error
 		}
 		clientChan := make(chan clientResult, 1)
-		
+
 		go func() {
 			client, err := initFunc()
 			clientChan <- clientResult{client: client, err: err}
 		}()
-		
+
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
@@ -76,7 +76,7 @@ func initOCIClients(ctx context.Context) (*OCIClients, error) {
 			return result.client, nil
 		}
 	}
-	
+
 	// Initialize Compute client
 	computeInterface, err := initClientWithTimeout("compute", func() (interface{}, error) {
 		return core.NewComputeClientWithConfigurationProvider(configProvider)
@@ -85,7 +85,7 @@ func initOCIClients(ctx context.Context) (*OCIClients, error) {
 		return nil, err
 	}
 	clients.ComputeClient = computeInterface.(core.ComputeClient)
-	
+
 	// Initialize VirtualNetwork client
 	vnInterface, err := initClientWithTimeout("virtual network", func() (interface{}, error) {
 		return core.NewVirtualNetworkClientWithConfigurationProvider(configProvider)
@@ -94,7 +94,7 @@ func initOCIClients(ctx context.Context) (*OCIClients, error) {
 		return nil, err
 	}
 	clients.VirtualNetworkClient = vnInterface.(core.VirtualNetworkClient)
-	
+
 	// Initialize BlockStorage client
 	bsInterface, err := initClientWithTimeout("block storage", func() (interface{}, error) {
 		return core.NewBlockstorageClientWithConfigurationProvider(configProvider)
@@ -103,7 +103,7 @@ func initOCIClients(ctx context.Context) (*OCIClients, error) {
 		return nil, err
 	}
 	clients.BlockStorageClient = bsInterface.(core.BlockstorageClient)
-	
+
 	// Initialize Identity client
 	identityInterface, err := initClientWithTimeout("identity", func() (interface{}, error) {
 		return identity.NewIdentityClientWithConfigurationProvider(configProvider)
@@ -215,19 +215,19 @@ func getCompartments(ctx context.Context, clients *OCIClients) ([]identity.Compa
 		return nil, ctx.Err()
 	default:
 	}
-	
+
 	// Get tenancy ID from the instance principal with timeout channel
 	type configResult struct {
 		provider common.ConfigurationProvider
 		err      error
 	}
 	configChan := make(chan configResult, 1)
-	
+
 	go func() {
 		provider, err := auth.InstancePrincipalConfigurationProvider()
 		configChan <- configResult{provider: provider, err: err}
 	}()
-	
+
 	var configProvider common.ConfigurationProvider
 	select {
 	case <-ctx.Done():
@@ -238,26 +238,26 @@ func getCompartments(ctx context.Context, clients *OCIClients) ([]identity.Compa
 		}
 		configProvider = result.provider
 	}
-	
+
 	// Check context after config provider setup
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	default:
 	}
-	
+
 	// Get tenancy ID with timeout channel
 	type tenancyResult struct {
 		tenancyID string
 		err       error
 	}
 	tenancyChan := make(chan tenancyResult, 1)
-	
+
 	go func() {
 		tenancyID, err := configProvider.TenancyOCID()
 		tenancyChan <- tenancyResult{tenancyID: tenancyID, err: err}
 	}()
-	
+
 	var tenancyID string
 	select {
 	case <-ctx.Done():
@@ -288,12 +288,12 @@ func getCompartments(ctx context.Context, clients *OCIClients) ([]identity.Compa
 		err  error
 	}
 	compartmentChan := make(chan compartmentResult, 1)
-	
+
 	go func() {
 		resp, err := clients.IdentityClient.ListCompartments(ctx, req)
 		compartmentChan <- compartmentResult{resp: resp, err: err}
 	}()
-	
+
 	var resp identity.ListCompartmentsResponse
 	select {
 	case <-ctx.Done():

@@ -16,7 +16,7 @@ func BenchmarkOptimizedCompartmentNameCache(b *testing.B) {
 		cache: make(map[string]string),
 		mu:    sync.RWMutex{},
 	}
-	
+
 	// Pre-populate cache with test data
 	testCompartments := make(map[string]string)
 	for i := 0; i < 1000; i++ {
@@ -25,9 +25,9 @@ func BenchmarkOptimizedCompartmentNameCache(b *testing.B) {
 		testCompartments[ocid] = name
 		cache.cache[ocid] = name
 	}
-	
+
 	ctx := context.Background()
-	
+
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		i := 0
@@ -45,7 +45,7 @@ func BenchmarkBatchPreload(b *testing.B) {
 		cache: make(map[string]string),
 		mu:    sync.RWMutex{},
 	}
-	
+
 	// Create test compartments
 	compartments := make([]identity.Compartment, 100)
 	for i := 0; i < 100; i++ {
@@ -56,9 +56,9 @@ func BenchmarkBatchPreload(b *testing.B) {
 			Name: &name,
 		}
 	}
-	
+
 	tenancyOCID := "ocid1.tenancy.oc1..test"
-	
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		cache.ClearCache()
@@ -72,7 +72,7 @@ func BenchmarkSimplePreload(b *testing.B) {
 		cache: make(map[string]string),
 		mu:    sync.RWMutex{},
 	}
-	
+
 	// Create test compartments
 	compartments := make([]identity.Compartment, 100)
 	for i := 0; i < 100; i++ {
@@ -83,9 +83,9 @@ func BenchmarkSimplePreload(b *testing.B) {
 			Name: &name,
 		}
 	}
-	
+
 	tenancyOCID := "ocid1.tenancy.oc1..test"
-	
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		cache.ClearCache()
@@ -97,35 +97,35 @@ func BenchmarkSimplePreload(b *testing.B) {
 func TestPerformanceOptimizations(t *testing.T) {
 	// Initialize logger for testing
 	logger = NewLogger(LogLevelSilent)
-	
+
 	cache := &CompartmentNameCache{
 		cache: make(map[string]string),
 		mu:    sync.RWMutex{},
 	}
-	
+
 	// Test double-checked locking
 	ctx := context.Background()
 	testOCID := "ocid1.compartment.oc1..test123"
-	
+
 	// First call should miss cache and trigger fetch
 	start := time.Now()
 	name1 := cache.GetCompartmentName(ctx, testOCID)
 	firstCallDuration := time.Since(start)
-	
+
 	// Second call should hit cache and be much faster
 	start = time.Now()
 	name2 := cache.GetCompartmentName(ctx, testOCID)
 	secondCallDuration := time.Since(start)
-	
+
 	if name1 != name2 {
 		t.Errorf("Cache inconsistency: first call returned %q, second call returned %q", name1, name2)
 	}
-	
+
 	// Cache hit should be significantly faster (allow some variation for timing)
 	if secondCallDuration >= firstCallDuration {
 		t.Logf("Warning: Cache hit (%v) was not faster than cache miss (%v)", secondCallDuration, firstCallDuration)
 	}
-	
+
 	t.Logf("Cache miss: %v, Cache hit: %v", firstCallDuration, secondCallDuration)
 }
 
@@ -133,19 +133,19 @@ func TestPerformanceOptimizations(t *testing.T) {
 func TestConcurrentCacheAccess(t *testing.T) {
 	// Initialize logger for testing
 	logger = NewLogger(LogLevelSilent)
-	
+
 	cache := &CompartmentNameCache{
 		cache: make(map[string]string),
 		mu:    sync.RWMutex{},
 	}
-	
+
 	ctx := context.Background()
 	numGoroutines := 50
 	numOpsPerGoroutine := 100
-	
+
 	var wg sync.WaitGroup
 	start := time.Now()
-	
+
 	for i := 0; i < numGoroutines; i++ {
 		wg.Add(1)
 		go func(goroutineID int) {
@@ -156,15 +156,15 @@ func TestConcurrentCacheAccess(t *testing.T) {
 			}
 		}(i)
 	}
-	
+
 	wg.Wait()
 	elapsed := time.Since(start)
-	
+
 	totalOps := numGoroutines * numOpsPerGoroutine
 	opsPerSecond := float64(totalOps) / elapsed.Seconds()
-	
+
 	t.Logf("Concurrent access test: %d ops in %v (%.2f ops/sec)", totalOps, elapsed, opsPerSecond)
-	
+
 	// Verify cache integrity
 	cacheSize, _ := cache.GetCacheStats()
 	if cacheSize > 10 {
@@ -176,10 +176,10 @@ func TestConcurrentCacheAccess(t *testing.T) {
 func TestBatchVsSimplePreload(t *testing.T) {
 	// Initialize logger for testing
 	logger = NewLogger(LogLevelSilent)
-	
+
 	// Test with different compartment counts
 	testSizes := []int{10, 50, 100, 200}
-	
+
 	for _, size := range testSizes {
 		t.Run(fmt.Sprintf("size_%d", size), func(t *testing.T) {
 			// Create test compartments
@@ -192,46 +192,46 @@ func TestBatchVsSimplePreload(t *testing.T) {
 					Name: &name,
 				}
 			}
-			
+
 			tenancyOCID := "ocid1.tenancy.oc1..test"
-			
+
 			// Test simple preload
 			simpleCache := &CompartmentNameCache{
 				cache: make(map[string]string),
 				mu:    sync.RWMutex{},
 			}
-			
+
 			start := time.Now()
 			err := simpleCache.simplePreloadCompartments(compartments, tenancyOCID)
 			simpleTime := time.Since(start)
-			
+
 			if err != nil {
 				t.Fatalf("Simple preload failed: %v", err)
 			}
-			
+
 			// Test batch preload
 			batchCache := &CompartmentNameCache{
 				cache: make(map[string]string),
 				mu:    sync.RWMutex{},
 			}
-			
+
 			start = time.Now()
 			err = batchCache.batchPreloadCompartments(compartments, tenancyOCID)
 			batchTime := time.Since(start)
-			
+
 			if err != nil {
 				t.Fatalf("Batch preload failed: %v", err)
 			}
-			
+
 			// Verify both methods produce same results
 			simpleSize, _ := simpleCache.GetCacheStats()
 			batchSize, _ := batchCache.GetCacheStats()
-			
+
 			if simpleSize != batchSize {
 				t.Errorf("Cache size mismatch: simple=%d, batch=%d", simpleSize, batchSize)
 			}
-			
-			t.Logf("Size %d: Simple=%v, Batch=%v (speedup=%.2fx)", 
+
+			t.Logf("Size %d: Simple=%v, Batch=%v (speedup=%.2fx)",
 				size, simpleTime, batchTime, simpleTime.Seconds()/batchTime.Seconds())
 		})
 	}

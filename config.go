@@ -36,7 +36,7 @@ func getDefaultConfig() *AppConfig {
 	return &AppConfig{
 		Version: "1.0",
 		General: GeneralConfig{
-			Timeout:      300,    // 5 minutes default
+			Timeout:      300, // 5 minutes default
 			LogLevel:     "normal",
 			OutputFormat: "json",
 			Progress:     true,
@@ -63,23 +63,23 @@ func getDefaultConfig() *AppConfig {
 // Configuration file search paths in priority order
 func getConfigPaths() []string {
 	paths := []string{}
-	
+
 	// 1. Environment variable
 	if configFile := os.Getenv("OCI_DUMP_CONFIG_FILE"); configFile != "" {
 		paths = append(paths, configFile)
 	}
-	
+
 	// 2. Current directory
 	paths = append(paths, "./oci-resource-dump.yaml")
-	
+
 	// 3. Home directory
 	if homeDir, err := os.UserHomeDir(); err == nil {
 		paths = append(paths, filepath.Join(homeDir, ".oci-resource-dump.yaml"))
 	}
-	
+
 	// 4. System directory
 	paths = append(paths, "/etc/oci-resource-dump.yaml")
-	
+
 	return paths
 }
 
@@ -87,23 +87,23 @@ func getConfigPaths() []string {
 func LoadConfig() (*AppConfig, error) {
 	// Start with default configuration
 	config := getDefaultConfig()
-	
+
 	// Try to find and load configuration file
 	for _, path := range getConfigPaths() {
 		if data, err := os.ReadFile(path); err == nil {
 			if err := yaml.Unmarshal(data, config); err != nil {
 				return nil, fmt.Errorf("failed to parse configuration file %s: %w", path, err)
 			}
-			
+
 			break // Use first found configuration file
 		}
 	}
-	
+
 	// Validate configuration
 	if err := validateConfig(config); err != nil {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
-	
+
 	return config, nil
 }
 
@@ -114,18 +114,18 @@ func validateConfig(config *AppConfig) error {
 	if !contains(validLogLevels, config.General.LogLevel) {
 		return fmt.Errorf("invalid log_level '%s', must be one of: %v", config.General.LogLevel, validLogLevels)
 	}
-	
+
 	// Validate output format
 	validFormats := []string{"json", "csv", "tsv"}
 	if !contains(validFormats, config.General.OutputFormat) {
 		return fmt.Errorf("invalid output_format '%s', must be one of: %v", config.General.OutputFormat, validFormats)
 	}
-	
+
 	// Validate timeout
 	if config.General.Timeout <= 0 {
 		return fmt.Errorf("timeout must be positive, got: %d", config.General.Timeout)
 	}
-	
+
 	return nil
 }
 
@@ -145,11 +145,11 @@ func SaveConfig(config *AppConfig, filename string) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal configuration: %w", err)
 	}
-	
+
 	if err := os.WriteFile(filename, data, 0644); err != nil {
 		return fmt.Errorf("failed to write configuration file: %w", err)
 	}
-	
+
 	return nil
 }
 
@@ -166,23 +166,23 @@ func MergeWithCLIArgs(config *AppConfig, cliTimeout *int, cliLogLevel *string, c
 	if cliTimeout != nil && *cliTimeout != -1 {
 		config.General.Timeout = *cliTimeout
 	}
-	
+
 	// CLI log level overrides config only if explicitly set (not "NOT_SET")
 	if cliLogLevel != nil && *cliLogLevel != "NOT_SET" {
 		config.General.LogLevel = *cliLogLevel
 	}
-	
+
 	// CLI format overrides config only if explicitly set (not "NOT_SET")
 	if cliFormat != nil && *cliFormat != "NOT_SET" {
 		config.General.OutputFormat = *cliFormat
 	}
-	
+
 	// CLI progress overrides config only when explicitly set (not nil)
 	// nil means no explicit flag was provided, so keep config file value
 	if cliProgress != nil {
 		config.General.Progress = *cliProgress
 	}
-	
+
 	// CLI output file overrides config only if explicitly set (not "NOT_SET")
 	if cliOutputFile != nil && *cliOutputFile != "NOT_SET" {
 		config.Output.File = *cliOutputFile

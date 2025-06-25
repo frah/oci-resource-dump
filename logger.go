@@ -13,10 +13,10 @@ import (
 type LogLevel int
 
 const (
-	LogLevelSilent LogLevel = iota // Only errors
-	LogLevelNormal                 // Basic progress info (default)
-	LogLevelVerbose                // Detailed operational info
-	LogLevelDebug                  // Full diagnostic info
+	LogLevelSilent  LogLevel = iota // Only errors
+	LogLevelNormal                  // Basic progress info (default)
+	LogLevelVerbose                 // Detailed operational info
+	LogLevelDebug                   // Full diagnostic info
 )
 
 // String returns the string representation of the log level
@@ -65,24 +65,24 @@ func NewLogger(level LogLevel) *Logger {
 	logger := &Logger{
 		level: level,
 	}
-	
+
 	// Always create error logger (goes to stderr)
 	logger.errorLog = log.New(os.Stderr, "ERROR: ", log.LstdFlags)
-	
+
 	// Create info logger based on level (goes to stderr for progress info)
 	if level >= LogLevelNormal {
 		logger.infoLog = log.New(os.Stderr, "", log.LstdFlags)
 	} else {
 		logger.infoLog = log.New(io.Discard, "", 0)
 	}
-	
+
 	// Create debug logger based on level
 	if level >= LogLevelDebug {
 		logger.debugLog = log.New(os.Stderr, "DEBUG: ", log.LstdFlags|log.Lshortfile)
 	} else {
 		logger.debugLog = log.New(io.Discard, "", 0)
 	}
-	
+
 	return logger
 }
 
@@ -125,14 +125,14 @@ func (l *Logger) SetLevel(level LogLevel) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.level = level
-	
+
 	// Recreate loggers based on new level
 	if level >= LogLevelNormal {
 		l.infoLog = log.New(os.Stderr, "", log.LstdFlags)
 	} else {
 		l.infoLog = log.New(io.Discard, "", 0)
 	}
-	
+
 	if level >= LogLevelDebug {
 		l.debugLog = log.New(os.Stderr, "DEBUG: ", log.LstdFlags|log.Lshortfile)
 	} else {

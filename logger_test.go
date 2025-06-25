@@ -155,7 +155,7 @@ func TestLogger_Error(t *testing.T) {
 
 func TestLogger_ConcurrentAccess(t *testing.T) {
 	logger := NewLogger(LogLevelDebug)
-	
+
 	// 複数ゴルーチンから同時にログを出力して、レースコンディションがないことを確認
 	var wg sync.WaitGroup
 	numGoroutines := 10
@@ -232,7 +232,7 @@ func TestLogger_MessageFormatting(t *testing.T) {
 						t.Errorf("Message formatting panicked: %v", r)
 					}
 				}()
-				
+
 				if tc.args == nil {
 					logger.Info("%s", tc.format)
 					logger.Verbose("%s", tc.format)
@@ -254,11 +254,11 @@ func TestLogger_LogLevelBehavior(t *testing.T) {
 	// 実際の出力をキャプチャするのは困難なため、実行時エラーがないことを確認
 
 	logLevels := []LogLevel{LogLevelSilent, LogLevelNormal, LogLevelVerbose, LogLevelDebug}
-	
+
 	for _, level := range logLevels {
 		t.Run(string(rune(level)), func(t *testing.T) {
 			logger := NewLogger(level)
-			
+
 			// 各メソッドがパニックしないことを確認
 			func() {
 				defer func() {
@@ -266,7 +266,7 @@ func TestLogger_LogLevelBehavior(t *testing.T) {
 						t.Errorf("Logger method panicked at level %v: %v", level, r)
 					}
 				}()
-				
+
 				logger.Info("info message")
 				logger.Verbose("verbose message")
 				logger.Debug("debug message")
@@ -279,7 +279,7 @@ func TestLogger_LogLevelBehavior(t *testing.T) {
 func TestLogger_NilSafety(t *testing.T) {
 	// nil logger でメソッドを呼び出してもパニックしないことを確認
 	var logger *Logger
-	
+
 	func() {
 		defer func() {
 			if r := recover(); r == nil {
@@ -295,7 +295,7 @@ func captureLogOutput(f func()) string {
 	// 実際の stderr キャプチャは複雑なため、
 	// ここでは関数が正常に実行されることのみを確認
 	var output strings.Builder
-	
+
 	func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -305,6 +305,6 @@ func captureLogOutput(f func()) string {
 		f()
 		output.WriteString("OK")
 	}()
-	
+
 	return output.String()
 }

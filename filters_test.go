@@ -160,7 +160,7 @@ func TestApplyResourceTypeFilter(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			result := ApplyResourceTypeFilter(tt.resourceType, tt.config)
 			if result != tt.expected {
-				t.Errorf("ApplyResourceTypeFilter(%s, %+v) = %v, want %v", 
+				t.Errorf("ApplyResourceTypeFilter(%s, %+v) = %v, want %v",
 					tt.resourceType, tt.config, result, tt.expected)
 			}
 		})
@@ -287,8 +287,8 @@ func TestOCIDFormat_Basic(t *testing.T) {
 func TestResourceTypeNormalization_Basic(t *testing.T) {
 	testCases := map[string]string{
 		"Compute_Instances": "compute_instances",
-		"VCNS":             "vcns", 
-		"blockVolumes":     "blockvolumes",
+		"VCNS":              "vcns",
+		"blockVolumes":      "blockvolumes",
 	}
 
 	for input, expected := range testCases {
@@ -302,21 +302,21 @@ func TestResourceTypeNormalization_Basic(t *testing.T) {
 func TestResourceTypeAliases(t *testing.T) {
 	// resourceTypeAliasesマップの一部をテスト
 	expectedAliases := map[string]string{
-		"compute_instances":     "ComputeInstances",
-		"vcns":                 "VCNs",
-		"subnets":              "Subnets",
-		"block_volumes":        "BlockVolumes",
-		"object_storage":       "ObjectStorageBuckets",  // Updated to match implementation
-		"oke_clusters":         "OKEClusters",
-		"drgs":                 "DRGs",
-		"databases":            "DatabaseSystems",       // Updated to match implementation
-		"load_balancers":       "LoadBalancers",
-		"autonomous_databases": "AutonomousDatabases",
-		"functions":            "Functions",
-		"api_gateways":         "APIGateways",
-		"file_storage":         "FileStorageSystems",    // Updated to match implementation
+		"compute_instances":      "ComputeInstances",
+		"vcns":                   "VCNs",
+		"subnets":                "Subnets",
+		"block_volumes":          "BlockVolumes",
+		"object_storage":         "ObjectStorageBuckets", // Updated to match implementation
+		"oke_clusters":           "OKEClusters",
+		"drgs":                   "DRGs",
+		"databases":              "DatabaseSystems", // Updated to match implementation
+		"load_balancers":         "LoadBalancers",
+		"autonomous_databases":   "AutonomousDatabases",
+		"functions":              "Functions",
+		"api_gateways":           "APIGateways",
+		"file_storage":           "FileStorageSystems", // Updated to match implementation
 		"network_load_balancers": "NetworkLoadBalancers",
-		"streaming":            "Streams",               // Updated to match implementation
+		"streaming":              "Streams", // Updated to match implementation
 	}
 
 	for alias, expected := range expectedAliases {

@@ -286,88 +286,88 @@ func TestGenerateDefaultConfigFile(t *testing.T) {
 
 func TestMergeWithCLIArgs(t *testing.T) {
 	tests := []struct {
-		name           string
-		config         *AppConfig
-		timeout        *int
-		logLevel       *string
-		outputFormat   *string
-		progress       *bool
-		outputFile     *string
-		expectedFormat string
-		expectedTimeout int
+		name             string
+		config           *AppConfig
+		timeout          *int
+		logLevel         *string
+		outputFormat     *string
+		progress         *bool
+		outputFile       *string
+		expectedFormat   string
+		expectedTimeout  int
 		expectedLogLevel string
 		expectedProgress bool
-		expectedFile    string
+		expectedFile     string
 	}{
 		{
-			name:           "override format",
-			config:         getDefaultConfig(),
-			timeout:        nil,
-			logLevel:       nil,
-			outputFormat:   stringPtr("csv"),
-			progress:       nil,
-			outputFile:     nil,
-			expectedFormat: "csv",
-			expectedTimeout: 300,
+			name:             "override format",
+			config:           getDefaultConfig(),
+			timeout:          nil,
+			logLevel:         nil,
+			outputFormat:     stringPtr("csv"),
+			progress:         nil,
+			outputFile:       nil,
+			expectedFormat:   "csv",
+			expectedTimeout:  300,
 			expectedLogLevel: "normal",
 			expectedProgress: true,
-			expectedFile:    "",
+			expectedFile:     "",
 		},
 		{
-			name:           "override timeout",
-			config:         getDefaultConfig(),
-			timeout:        intPtr(600),
-			logLevel:       nil,
-			outputFormat:   nil,
-			progress:       nil,
-			outputFile:     nil,
-			expectedFormat: "json",
-			expectedTimeout: 600,
+			name:             "override timeout",
+			config:           getDefaultConfig(),
+			timeout:          intPtr(600),
+			logLevel:         nil,
+			outputFormat:     nil,
+			progress:         nil,
+			outputFile:       nil,
+			expectedFormat:   "json",
+			expectedTimeout:  600,
 			expectedLogLevel: "normal",
 			expectedProgress: true,
-			expectedFile:    "",
+			expectedFile:     "",
 		},
 		{
-			name:           "override all explicitly",
-			config:         getDefaultConfig(),
-			timeout:        intPtr(120),
-			logLevel:       stringPtr("debug"),
-			outputFormat:   stringPtr("tsv"),
-			progress:       boolPtr(false), // explicitly set to false
-			outputFile:     stringPtr("output.json"),
-			expectedFormat: "tsv",
-			expectedTimeout: 120,
+			name:             "override all explicitly",
+			config:           getDefaultConfig(),
+			timeout:          intPtr(120),
+			logLevel:         stringPtr("debug"),
+			outputFormat:     stringPtr("tsv"),
+			progress:         boolPtr(false), // explicitly set to false
+			outputFile:       stringPtr("output.json"),
+			expectedFormat:   "tsv",
+			expectedTimeout:  120,
 			expectedLogLevel: "debug",
 			expectedProgress: false,
-			expectedFile:    "output.json",
+			expectedFile:     "output.json",
 		},
 		{
-			name:           "CLI not specified (Issue #2/#3 reproduction)",
-			config:         getDefaultConfig(),
-			timeout:        intPtr(-1),       // CLI default (not specified)
-			logLevel:       stringPtr("NOT_SET"), // CLI default (not specified)
-			outputFormat:   stringPtr("NOT_SET"), // CLI default (not specified)
-			progress:       nil,               // No explicit flag (not specified)
-			outputFile:     stringPtr("NOT_SET"), // CLI default (not specified)
-			expectedFormat: "json",    // Should keep config file value
-			expectedTimeout: 300,      // Should keep config file value (Issue #3)
-			expectedLogLevel: "normal", // Should keep config file value
-			expectedProgress: true,     // Should keep config file value
-			expectedFile:    "",        // Should keep config file value
+			name:             "CLI not specified (Issue #2/#3 reproduction)",
+			config:           getDefaultConfig(),
+			timeout:          intPtr(-1),           // CLI default (not specified)
+			logLevel:         stringPtr("NOT_SET"), // CLI default (not specified)
+			outputFormat:     stringPtr("NOT_SET"), // CLI default (not specified)
+			progress:         nil,                  // No explicit flag (not specified)
+			outputFile:       stringPtr("NOT_SET"), // CLI default (not specified)
+			expectedFormat:   "json",               // Should keep config file value
+			expectedTimeout:  300,                  // Should keep config file value (Issue #3)
+			expectedLogLevel: "normal",             // Should keep config file value
+			expectedProgress: true,                 // Should keep config file value
+			expectedFile:     "",                   // Should keep config file value
 		},
 		{
-			name:           "Mix of specified and not specified",
-			config:         getDefaultConfig(),
-			timeout:        intPtr(450),         // Explicitly specified
-			logLevel:       stringPtr("NOT_SET"), // Not specified
-			outputFormat:   stringPtr("csv"),     // Explicitly specified
-			progress:       nil,               // Not specified
-			outputFile:     stringPtr("NOT_SET"), // Not specified
-			expectedFormat: "csv",     // Should use CLI override
-			expectedTimeout: 450,      // Should use CLI override
-			expectedLogLevel: "normal", // Should keep config file value
-			expectedProgress: true,     // Should keep config file value
-			expectedFile:    "",        // Should keep config file value
+			name:             "Mix of specified and not specified",
+			config:           getDefaultConfig(),
+			timeout:          intPtr(450),          // Explicitly specified
+			logLevel:         stringPtr("NOT_SET"), // Not specified
+			outputFormat:     stringPtr("csv"),     // Explicitly specified
+			progress:         nil,                  // Not specified
+			outputFile:       stringPtr("NOT_SET"), // Not specified
+			expectedFormat:   "csv",                // Should use CLI override
+			expectedTimeout:  450,                  // Should use CLI override
+			expectedLogLevel: "normal",             // Should keep config file value
+			expectedProgress: true,                 // Should keep config file value
+			expectedFile:     "",                   // Should keep config file value
 		},
 	}
 
@@ -395,9 +395,9 @@ func TestMergeWithCLIArgs(t *testing.T) {
 }
 
 // ヘルパー関数
-func intPtr(i int) *int { return &i }
+func intPtr(i int) *int          { return &i }
 func stringPtr(s string) *string { return &s }
-func boolPtr(b bool) *bool { return &b }
+func boolPtr(b bool) *bool       { return &b }
 
 func TestGetConfigPaths(t *testing.T) {
 	paths := getConfigPaths()
@@ -479,7 +479,7 @@ output:
 
 	// Before fix: CLI defaults would override config file
 	// After fix: CLI defaults should NOT override config file
-	
+
 	// Test BEFORE applying MergeWithCLIArgs - config should be loaded correctly
 	if config.General.Timeout != 300 {
 		t.Errorf("Config file loading failed: timeout = %v, want 300", config.General.Timeout)
@@ -489,11 +489,11 @@ output:
 	}
 
 	// Simulate CLI arguments with special "not specified" values (after fix)
-	timeoutCLI := -1           // Special value meaning "not specified"
-	logLevelCLI := "NOT_SET"   // Special value meaning "not specified"
-	formatCLI := "NOT_SET"     // Special value meaning "not specified"
+	timeoutCLI := -1            // Special value meaning "not specified"
+	logLevelCLI := "NOT_SET"    // Special value meaning "not specified"
+	formatCLI := "NOT_SET"      // Special value meaning "not specified"
 	var progressCLI *bool = nil // No explicit flag (not specified)
-	outputFileCLI := "NOT_SET" // Special value meaning "not specified"
+	outputFileCLI := "NOT_SET"  // Special value meaning "not specified"
 
 	MergeWithCLIArgs(config, &timeoutCLI, &logLevelCLI, &formatCLI, progressCLI, &outputFileCLI)
 
@@ -516,7 +516,7 @@ output:
 // This test should FAIL before the fix and PASS after the fix
 func TestIssue2and3_BeforeFix_SimulateBrokenBehavior(t *testing.T) {
 	config := getDefaultConfig()
-	
+
 	// Modify config to simulate what would be loaded from a config file
 	config.General.Timeout = 600        // From config file
 	config.General.LogLevel = "debug"   // From config file
@@ -525,11 +525,11 @@ func TestIssue2and3_BeforeFix_SimulateBrokenBehavior(t *testing.T) {
 
 	// Simulate old broken MergeWithCLIArgs behavior (before fix)
 	// This is what would happen with CLI defaults before our fix
-	brokenTimeoutCLI := 0          // Old CLI default
-	brokenLogLevelCLI := ""        // Old CLI default  
-	brokenFormatCLI := ""          // Old CLI default
-	brokenProgressCLI := false     // CLI default
-	brokenOutputFileCLI := ""      // Old CLI default
+	brokenTimeoutCLI := 0      // Old CLI default
+	brokenLogLevelCLI := ""    // Old CLI default
+	brokenFormatCLI := ""      // Old CLI default
+	brokenProgressCLI := false // CLI default
+	brokenOutputFileCLI := ""  // Old CLI default
 
 	// Simulate broken behavior - this would incorrectly override config values
 	if brokenTimeoutCLI == 0 {
@@ -551,10 +551,10 @@ func TestIssue2and3_BeforeFix_SimulateBrokenBehavior(t *testing.T) {
 	}
 
 	// Apply our fixed MergeWithCLIArgs with special "not specified" values
-	fixedTimeoutCLI := -1          // Fixed: special value meaning "not specified"
-	fixedLogLevelCLI := "NOT_SET"  // Fixed: special value meaning "not specified"
-	fixedFormatCLI := "NOT_SET"    // Fixed: special value meaning "not specified"
-	fixedProgressCLI := false      // CLI default
+	fixedTimeoutCLI := -1           // Fixed: special value meaning "not specified"
+	fixedLogLevelCLI := "NOT_SET"   // Fixed: special value meaning "not specified"
+	fixedFormatCLI := "NOT_SET"     // Fixed: special value meaning "not specified"
+	fixedProgressCLI := false       // CLI default
 	fixedOutputFileCLI := "NOT_SET" // Fixed: special value meaning "not specified"
 
 	MergeWithCLIArgs(config, &fixedTimeoutCLI, &fixedLogLevelCLI, &fixedFormatCLI, &fixedProgressCLI, &fixedOutputFileCLI)

@@ -68,7 +68,7 @@ func TestProgressTracker_UpdateWithProgress(t *testing.T) {
 // CalculateETA関数は非公開フィールドに依存するため、基本テストのみ
 func TestProgressTracker_Methods(t *testing.T) {
 	tracker := NewProgressTracker(false, 10, 15)
-	
+
 	// 基本メソッドがパニックしないことを確認
 	func() {
 		defer func() {
@@ -103,7 +103,7 @@ func TestPercentageCalculation_Basic(t *testing.T) {
 	for _, tt := range tests {
 		percentage := (tt.current * 100) / tt.total
 		if percentage != tt.expected {
-			t.Errorf("percentage calculation current=%d, total=%d, got %d, want %d", 
+			t.Errorf("percentage calculation current=%d, total=%d, got %d, want %d",
 				tt.current, tt.total, percentage, tt.expected)
 		}
 	}
@@ -219,7 +219,7 @@ func TestProgressTracker_ProgressDisplay(t *testing.T) {
 func TestElapsedTime_Basic(t *testing.T) {
 	start := time.Now().Add(-30 * time.Second)
 	elapsed := time.Since(start)
-	
+
 	if elapsed < 30*time.Second {
 		t.Errorf("Elapsed time calculation error: %v should be >= 30s", elapsed)
 	}
