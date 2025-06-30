@@ -19,14 +19,13 @@ import (
 
 // Config holds the application configuration
 type Config struct {
-	OutputFormat    string
-	Timeout         time.Duration
-	MaxWorkers      int
-	LogLevel        LogLevel
-	Logger          *Logger
-	ShowProgress    bool
-	ProgressTracker *ProgressTracker
-	Filters         FilterConfig
+	OutputFormat string
+	Timeout      time.Duration
+	MaxWorkers   int
+	LogLevel     LogLevel
+	Logger       *Logger
+	ShowProgress bool
+	Filters      FilterConfig
 }
 
 // OCIClients holds all OCI service clients
@@ -64,34 +63,3 @@ type CompartmentNameCache struct {
 	client identity.IdentityClient
 }
 
-// ProgressTracker provides thread-safe progress tracking with ETA calculation
-type ProgressTracker struct {
-	mu                     sync.RWMutex
-	startTime              time.Time
-	lastUpdateTime         time.Time
-	totalCompartments      int64
-	processedCompartments  int64
-	totalResourceTypes     int64
-	processedResourceTypes int64
-	totalResources         int64
-	errorCount             int64
-	retryCount             int64
-	currentOperation       string
-	currentCompartment     string
-	enabled                bool
-	speedSamples           []float64
-	maxSamples             int
-	refreshInterval        time.Duration
-	done                   chan struct{}
-	updateChannel          chan ProgressUpdate
-}
-
-// ProgressUpdate represents a progress update from worker goroutines
-type ProgressUpdate struct {
-	CompartmentName       string
-	Operation             string
-	ResourceCount         int64
-	IsCompartmentComplete bool
-	IsError               bool
-	IsRetry               bool
-}

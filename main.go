@@ -66,8 +66,8 @@ as well as diff analysis between two resource dumps.`,
 	rootCmd.Flags().IntVarP(&timeoutSeconds, "timeout", "t", -1, "Timeout in seconds for the entire operation")
 	rootCmd.Flags().StringVarP(&logLevelStr, "log-level", "l", "NOT_SET", "Log level: silent, normal, verbose, debug")
 	rootCmd.Flags().StringVarP(&outputFormat, "format", "f", "NOT_SET", "Output format: csv, tsv, or json")
-	rootCmd.Flags().BoolVar(&showProgress, "progress", false, "Show progress bar with real-time statistics")
-	rootCmd.Flags().BoolVar(&noProgress, "no-progress", false, "Disable progress bar (default behavior)")
+	rootCmd.Flags().BoolVar(&showProgress, "progress", true, "Show progress bar with real-time statistics (default behavior)")
+	rootCmd.Flags().BoolVar(&noProgress, "no-progress", false, "Disable progress bar")
 	rootCmd.Flags().StringVarP(&outputFile, "output-file", "o", "NOT_SET", "Output file path (default: stdout)")
 	rootCmd.Flags().BoolVar(&generateConfig, "generate-config", false, "Generate default configuration file")
 
@@ -309,13 +309,20 @@ func runMainLogic(timeoutSeconds int, logLevelStr, outputFormat string, showProg
 
 	// Configure progress bar - from config file or CLI
 	config.ShowProgress = appConfig.General.Progress
+	
+	// CLI flags override config file
+	if showProgress {
+		config.ShowProgress = true
+	}
+	if noProgress {
+		config.ShowProgress = false
+	}
 
 	// Re-initialize logger with final log level
 	logger = NewLogger(logLevel)
 	config.Logger = logger
 
-	// Initialize progress tracker
-	config.ProgressTracker = NewProgressTracker(config.ShowProgress, 0, 0)
+	// Progress tracking is now handled directly in discovery.go with uiprogress
 
 	// Validate output format
 	validFormats := []string{"csv", "tsv", "json"}
@@ -370,7 +377,7 @@ func runMainLogic(timeoutSeconds int, logLevelStr, outputFormat string, showProg
 	// Discover all resources
 	logger.Info("Starting resource discovery with %v timeout...", config.Timeout)
 	logger.Debug("Discovery configuration - Format: %s, Timeout: %v, LogLevel: %s, Progress: %v", config.OutputFormat, config.Timeout, config.LogLevel, config.ShowProgress)
-	resources, err := discoverAllResourcesWithProgress(ctx, clients, config.ProgressTracker, config.Filters)
+	resources, err := discoverAllResourcesWithProgress(ctx, clients, config.ShowProgress, config.Filters)
 	if err != nil {
 		return fmt.Errorf("error discovering resources: %v", err)
 	}

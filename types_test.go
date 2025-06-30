@@ -138,7 +138,6 @@ func TestConfig_DefaultValues(t *testing.T) {
 		LogLevel:        LogLevelNormal,
 		ShowProgress:    false,
 		Logger:          nil,
-		ProgressTracker: nil,
 		Filters:         FilterConfig{},
 	}
 
