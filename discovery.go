@@ -1164,7 +1164,7 @@ func discoverAllResourcesWithProgress(ctx context.Context, clients *OCIClients, 
 	// Update progress tracker with compartment count
 	if progressTracker != nil {
 		progressTracker.totalCompartments = int64(len(filteredCompartments))
-		progressTracker.totalResourceTypes = 21 // Number of resource types we discover
+		progressTracker.totalResourceTypes = 25 // Number of resource types we discover
 		progressTracker.Start()
 		defer progressTracker.Stop()
 	}
@@ -1193,6 +1193,10 @@ func discoverAllResourcesWithProgress(ctx context.Context, clients *OCIClients, 
 		"AutonomousDatabases":         discoverAutonomousDatabases,
 		"ExadataInfrastructures":      discoverExadataInfrastructures,
 		"CloudExadataInfrastructures": discoverCloudExadataInfrastructures,
+		"VmClusters":                  discoverVmClusters,
+		"Databases":                   discoverDatabasesInVmClusters,
+		"DbHomes":                     discoverDbHomes,
+		"DbNodes":                     discoverDbNodes,
 		"Functions":                   discoverFunctions,
 		"APIGateways":                 discoverAPIGateways,
 		"FileStorageSystems":          discoverFileStorageSystems,
@@ -1743,5 +1747,347 @@ func discoverCloudExadataInfrastructures(ctx context.Context, clients *OCIClient
 	}
 
 	logger.Verbose("Found %d Cloud Exadata Infrastructures in compartment %s", len(resources), compartmentID)
+	return resources, nil
+}
+
+// discoverVmClusters discovers all VM Clusters in a compartment
+func discoverVmClusters(ctx context.Context, clients *OCIClients, compartmentID string) ([]ResourceInfo, error) {
+	var resources []ResourceInfo
+	var allVmClusters []database.VmClusterSummary
+
+	logger.Debug("Starting VM Cluster discovery for compartment: %s", compartmentID)
+
+	// Implement pagination to get all VM Clusters
+	var page *string
+	pageCount := 0
+	for {
+		pageCount++
+		logger.Debug("Fetching VM Clusters page %d for compartment: %s", pageCount, compartmentID)
+		req := database.ListVmClustersRequest{
+			CompartmentId: common.String(compartmentID),
+			Page:          page,
+		}
+
+		resp, err := clients.DatabaseClient.ListVmClusters(ctx, req)
+
+		if err != nil {
+			return nil, err
+		}
+
+		allVmClusters = append(allVmClusters, resp.Items...)
+
+		if resp.OpcNextPage == nil {
+			break
+		}
+		page = resp.OpcNextPage
+	}
+
+	for _, vmCluster := range allVmClusters {
+		if vmCluster.LifecycleState != database.VmClusterSummaryLifecycleStateTerminated {
+			name := ""
+			if vmCluster.DisplayName != nil {
+				name = *vmCluster.DisplayName
+			}
+			ocid := ""
+			if vmCluster.Id != nil {
+				ocid = *vmCluster.Id
+			}
+
+			additionalInfo := make(map[string]interface{})
+
+			// Add shape
+			if vmCluster.Shape != nil {
+				additionalInfo["shape"] = *vmCluster.Shape
+			}
+
+			// Add CPU core count
+			if vmCluster.CpusEnabled != nil {
+				additionalInfo["cpus_enabled"] = *vmCluster.CpusEnabled
+			}
+
+			// Add Exadata Infrastructure ID
+			if vmCluster.ExadataInfrastructureId != nil {
+				additionalInfo["exadata_infrastructure_id"] = *vmCluster.ExadataInfrastructureId
+			}
+
+			// Add VM Cluster Network ID
+			if vmCluster.VmClusterNetworkId != nil {
+				additionalInfo["vm_cluster_network_id"] = *vmCluster.VmClusterNetworkId
+			}
+
+			resources = append(resources, createResourceInfo(ctx, "VmCluster", name, ocid, compartmentID, additionalInfo, clients.CompartmentCache))
+		}
+	}
+
+	logger.Verbose("Found %d VM Clusters in compartment %s", len(resources), compartmentID)
+	return resources, nil
+}
+
+// discoverDatabasesInVmClusters discovers all databases within VM Clusters in a compartment
+func discoverDatabasesInVmClusters(ctx context.Context, clients *OCIClients, compartmentID string) ([]ResourceInfo, error) {
+	var resources []ResourceInfo
+
+	logger.Debug("Starting Database discovery for compartment: %s", compartmentID)
+
+	// First, get all VM Clusters in the compartment
+	vmClusters, err := discoverVmClusters(ctx, clients, compartmentID)
+	if err != nil {
+		logger.Verbose("Error discovering VM Clusters for database search: %v", err)
+		return resources, nil // Return empty but don't fail
+	}
+
+	// For each VM Cluster, discover databases
+	for _, vmClusterResource := range vmClusters {
+		vmClusterID := vmClusterResource.OCID
+		logger.Debug("Discovering databases in VM Cluster: %s", vmClusterID)
+
+		var allDatabases []database.DatabaseSummary
+		var page *string
+		pageCount := 0
+		for {
+			pageCount++
+			logger.Debug("Fetching databases page %d for VM Cluster: %s", pageCount, vmClusterID)
+			req := database.ListDatabasesRequest{
+				CompartmentId: common.String(compartmentID),
+				DbHomeId:      nil, // We'll search by compartment
+				Page:          page,
+			}
+
+			resp, err := clients.DatabaseClient.ListDatabases(ctx, req)
+
+			if err != nil {
+				logger.Verbose("Error listing databases in VM Cluster %s: %v", vmClusterID, err)
+				break // Continue with next VM Cluster
+			}
+
+			allDatabases = append(allDatabases, resp.Items...)
+
+			if resp.OpcNextPage == nil {
+				break
+			}
+			page = resp.OpcNextPage
+		}
+
+		for _, database := range allDatabases {
+			if string(database.LifecycleState) != "TERMINATED" {
+				name := ""
+				if database.DbName != nil {
+					name = *database.DbName
+				}
+				ocid := ""
+				if database.Id != nil {
+					ocid = *database.Id
+				}
+
+				additionalInfo := make(map[string]interface{})
+
+				// Add DB Home ID
+				if database.DbHomeId != nil {
+					additionalInfo["db_home_id"] = *database.DbHomeId
+				}
+
+				// Add DB unique name
+				if database.DbUniqueName != nil {
+					additionalInfo["db_unique_name"] = *database.DbUniqueName
+				}
+
+				// Add character set
+				if database.CharacterSet != nil {
+					additionalInfo["character_set"] = *database.CharacterSet
+				}
+
+				// Add associated VM Cluster
+				additionalInfo["vm_cluster_id"] = vmClusterID
+				additionalInfo["vm_cluster_name"] = vmClusterResource.ResourceName
+
+				resources = append(resources, createResourceInfo(ctx, "Database", name, ocid, compartmentID, additionalInfo, clients.CompartmentCache))
+			}
+		}
+	}
+
+	logger.Verbose("Found %d databases in VM Clusters in compartment %s", len(resources), compartmentID)
+	return resources, nil
+}
+
+// discoverDbHomes discovers all Database Homes in a compartment
+func discoverDbHomes(ctx context.Context, clients *OCIClients, compartmentID string) ([]ResourceInfo, error) {
+	var resources []ResourceInfo
+	var allDbHomes []database.DbHomeSummary
+
+	logger.Debug("Starting Database Home discovery for compartment: %s", compartmentID)
+
+	// Implement pagination to get all Database Homes
+	var page *string
+	pageCount := 0
+	for {
+		pageCount++
+		logger.Debug("Fetching Database Homes page %d for compartment: %s", pageCount, compartmentID)
+		req := database.ListDbHomesRequest{
+			CompartmentId: common.String(compartmentID),
+			Page:          page,
+		}
+
+		resp, err := clients.DatabaseClient.ListDbHomes(ctx, req)
+
+		if err != nil {
+			return nil, err
+		}
+
+		allDbHomes = append(allDbHomes, resp.Items...)
+
+		if resp.OpcNextPage == nil {
+			break
+		}
+		page = resp.OpcNextPage
+	}
+
+	for _, dbHome := range allDbHomes {
+		if dbHome.LifecycleState != database.DbHomeSummaryLifecycleStateTerminated {
+			name := ""
+			if dbHome.DisplayName != nil {
+				name = *dbHome.DisplayName
+			}
+			ocid := ""
+			if dbHome.Id != nil {
+				ocid = *dbHome.Id
+			}
+
+			additionalInfo := make(map[string]interface{})
+
+			// Add DB system ID
+			if dbHome.DbSystemId != nil {
+				additionalInfo["db_system_id"] = *dbHome.DbSystemId
+			}
+
+			// Add VM Cluster ID
+			if dbHome.VmClusterId != nil {
+				additionalInfo["vm_cluster_id"] = *dbHome.VmClusterId
+			}
+
+			// Add database software image ID
+			if dbHome.DatabaseSoftwareImageId != nil {
+				additionalInfo["database_software_image_id"] = *dbHome.DatabaseSoftwareImageId
+			}
+
+			// Add DB version
+			if dbHome.DbVersion != nil {
+				additionalInfo["db_version"] = *dbHome.DbVersion
+			}
+
+			resources = append(resources, createResourceInfo(ctx, "DbHome", name, ocid, compartmentID, additionalInfo, clients.CompartmentCache))
+		}
+	}
+
+	logger.Verbose("Found %d Database Homes in compartment %s", len(resources), compartmentID)
+	return resources, nil
+}
+
+// discoverDbNodes discovers all Database Nodes in a compartment
+func discoverDbNodes(ctx context.Context, clients *OCIClients, compartmentID string) ([]ResourceInfo, error) {
+	var resources []ResourceInfo
+
+	logger.Debug("Starting Database Node discovery for compartment: %s", compartmentID)
+
+	// First, get all database systems in the compartment to find nodes
+	var allDbSystems []database.DbSystemSummary
+	var page *string
+	pageCount := 0
+	for {
+		pageCount++
+		logger.Debug("Fetching database systems page %d for compartment: %s", pageCount, compartmentID)
+		req := database.ListDbSystemsRequest{
+			CompartmentId: common.String(compartmentID),
+			Page:          page,
+		}
+
+		resp, err := clients.DatabaseClient.ListDbSystems(ctx, req)
+
+		if err != nil {
+			return nil, err
+		}
+
+		allDbSystems = append(allDbSystems, resp.Items...)
+
+		if resp.OpcNextPage == nil {
+			break
+		}
+		page = resp.OpcNextPage
+	}
+
+	// For each database system, get its nodes
+	for _, dbSystem := range allDbSystems {
+		if dbSystem.LifecycleState != database.DbSystemSummaryLifecycleStateTerminated && dbSystem.Id != nil {
+			var allDbNodes []database.DbNodeSummary
+			var nodePage *string
+			nodePageCount := 0
+			for {
+				nodePageCount++
+				logger.Debug("Fetching Database Nodes page %d for DB System: %s", nodePageCount, *dbSystem.Id)
+				nodeReq := database.ListDbNodesRequest{
+					CompartmentId: common.String(compartmentID),
+					DbSystemId:    dbSystem.Id,
+					Page:          nodePage,
+				}
+
+				nodeResp, err := clients.DatabaseClient.ListDbNodes(ctx, nodeReq)
+
+				if err != nil {
+					logger.Verbose("Error listing database nodes for DB System %s: %v", *dbSystem.Id, err)
+					break // Continue with next DB System
+				}
+
+				allDbNodes = append(allDbNodes, nodeResp.Items...)
+
+				if nodeResp.OpcNextPage == nil {
+					break
+				}
+				nodePage = nodeResp.OpcNextPage
+			}
+
+			for _, dbNode := range allDbNodes {
+				if dbNode.LifecycleState != database.DbNodeSummaryLifecycleStateTerminated {
+					name := ""
+					if dbNode.Hostname != nil {
+						name = *dbNode.Hostname
+					}
+					ocid := ""
+					if dbNode.Id != nil {
+						ocid = *dbNode.Id
+					}
+
+					additionalInfo := make(map[string]interface{})
+
+					// Add DB system ID
+					if dbSystem.Id != nil {
+						additionalInfo["db_system_id"] = *dbSystem.Id
+					}
+
+					// Add DB system name
+					if dbSystem.DisplayName != nil {
+						additionalInfo["db_system_name"] = *dbSystem.DisplayName
+					}
+
+					// Add VNIC ID
+					if dbNode.VnicId != nil {
+						additionalInfo["vnic_id"] = *dbNode.VnicId
+					}
+
+					// Add backup VNIC ID
+					if dbNode.BackupVnicId != nil {
+						additionalInfo["backup_vnic_id"] = *dbNode.BackupVnicId
+					}
+
+					// Add software storage size in GB
+					if dbNode.SoftwareStorageSizeInGB != nil {
+						additionalInfo["software_storage_size_in_gb"] = *dbNode.SoftwareStorageSizeInGB
+					}
+
+					resources = append(resources, createResourceInfo(ctx, "DbNode", name, ocid, compartmentID, additionalInfo, clients.CompartmentCache))
+				}
+			}
+		}
+	}
+
+	logger.Verbose("Found %d Database Nodes in compartment %s", len(resources), compartmentID)
 	return resources, nil
 }

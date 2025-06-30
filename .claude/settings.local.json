@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find:*)",
+      "Bash(ls:*)",
+      "Bash(go mod init:*)",
+      "Bash(go:*)",
+      "Bash(./oci-resource-dump --help)",
+      "Bash(mkdir:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "WebFetch(domain:mcp.context7.com)",
+      "Bash(grep:*)",
+      "Bash(rg:*)",
+      "Bash(awk:*)",
+      "Bash(timeout:*)",
+      "Bash(./oci-resource-dump:*)",
+      "Bash(./test_timeout.sh:*)",
+      "Bash(chmod:*)",
+      "Bash(git push:*)",
+      "Bash(git pull:*)",
+      "Bash(gh issue list:*)",
+      "Bash(gh issue view:*)",
+      "mcp__context7__resolve-library-id",
+      "mcp__context7__get-library-docs"
+    ],
+    "deny": []
+  }
+}
