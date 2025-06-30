@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gosuri/uiprogress"
 	"github.com/oracle/oci-go-sdk/v65/apigateway"
 	"github.com/oracle/oci-go-sdk/v65/common"
 	"github.com/oracle/oci-go-sdk/v65/containerengine"
@@ -76,7 +77,7 @@ func isTransientError(err error) bool {
 }
 
 // withRetryAndProgress executes an operation with retry logic and progress tracking
-func withRetryAndProgress(ctx context.Context, operation func() error, maxRetries int, operationName string, progressTracker *ProgressTracker) error {
+func withRetryAndProgress(ctx context.Context, operation func() error, maxRetries int, operationName string, progressTracker interface{}) error {
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		err := operation()
 		if err == nil {
@@ -92,10 +93,7 @@ func withRetryAndProgress(ctx context.Context, operation func() error, maxRetrie
 			return fmt.Errorf("operation '%s' failed after %d attempts: %w", operationName, maxRetries+1, err)
 		}
 
-		// Increment retry counter
-		if progressTracker != nil {
-			progressTracker.Update(ProgressUpdate{IsRetry: true})
-		}
+		// Retry counter - simplified (no longer needed with uiprogress)
 
 		// Exponential backoff with jitter (up to 30 seconds max)
 		backoff := time.Duration(math.Min(math.Pow(2, float64(attempt)), 30)) * time.Second
@@ -1142,7 +1140,7 @@ func discoverStreams(ctx context.Context, clients *OCIClients, compartmentID str
 }
 
 // discoverAllResourcesWithProgress coordinates the discovery of all resource types with progress tracking
-func discoverAllResourcesWithProgress(ctx context.Context, clients *OCIClients, progressTracker *ProgressTracker, filters FilterConfig) ([]ResourceInfo, error) {
+func discoverAllResourcesWithProgress(ctx context.Context, clients *OCIClients, enableProgress bool, filters FilterConfig) ([]ResourceInfo, error) {
 	var allResources []ResourceInfo
 
 	// Get list of compartments
@@ -1160,20 +1158,6 @@ func discoverAllResourcesWithProgress(ctx context.Context, clients *OCIClients, 
 	if err != nil {
 		return nil, fmt.Errorf("failed to compile filter patterns: %w", err)
 	}
-
-	// Update progress tracker with compartment count
-	if progressTracker != nil {
-		progressTracker.totalCompartments = int64(len(filteredCompartments))
-		progressTracker.totalResourceTypes = 25 // Number of resource types we discover
-		progressTracker.Start()
-		defer progressTracker.Stop()
-	}
-
-	// Use a semaphore to limit concurrent compartments (max 5)
-	sem := make(chan struct{}, 5)
-	var wg sync.WaitGroup
-	var mu sync.Mutex
-	var discoveryErrors []string
 
 	// Discovery functions map
 	discoveryFuncs := map[string]func(context.Context, *OCIClients, string) ([]ResourceInfo, error){
@@ -1204,6 +1188,48 @@ func discoverAllResourcesWithProgress(ctx context.Context, clients *OCIClients, 
 		"Streams":                     discoverStreams,
 	}
 
+	// Initialize uiprogress if enabled
+	var compartmentBars map[string]*uiprogress.Bar
+	var resourceCounts sync.Map // compartmentID -> resource count
+	
+	if enableProgress {
+		uiprogress.Start()
+		defer uiprogress.Stop()
+		
+		compartmentBars = make(map[string]*uiprogress.Bar)
+		for _, compartment := range filteredCompartments {
+			if compartment.LifecycleState == "ACTIVE" {
+				bar := uiprogress.AddBar(len(discoveryFuncs)) // 25 resource types
+				
+				// Compartment name display (left side)
+				bar.PrependFunc(func(compName string) func(*uiprogress.Bar) string {
+					return func(b *uiprogress.Bar) string {
+						return fmt.Sprintf("%-15s", compName)
+					}
+				}(*compartment.Name))
+				
+				// Resource count display (right side)
+				bar.AppendFunc(func(compID string) func(*uiprogress.Bar) string {
+					return func(b *uiprogress.Bar) string {
+						if count, ok := resourceCounts.Load(compID); ok {
+							return fmt.Sprintf("| %d resources found", count.(int))
+						}
+						return "| 0 resources found"
+					}
+				}(*compartment.Id))
+				
+				compartmentBars[*compartment.Id] = bar
+				resourceCounts.Store(*compartment.Id, 0)
+			}
+		}
+	}
+
+	// Use a semaphore to limit concurrent compartments (max 5)
+	sem := make(chan struct{}, 5)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var discoveryErrors []string
+
 	for _, compartment := range filteredCompartments {
 		if compartment.LifecycleState != "ACTIVE" {
 			continue
@@ -1224,14 +1250,13 @@ func discoverAllResourcesWithProgress(ctx context.Context, clients *OCIClients, 
 				// Apply resource type filter
 				if !ApplyResourceTypeFilter(resourceType, filters) {
 					logger.Debug("Skipping resource type %s due to filters", resourceType)
+					// Still update progress for skipped resource types
+					if enableProgress && compartmentBars != nil {
+						if bar, exists := compartmentBars[comp]; exists {
+							bar.Incr()
+						}
+					}
 					continue
-				}
-				// Update progress
-				if progressTracker != nil {
-					progressTracker.Update(ProgressUpdate{
-						CompartmentName: compName,
-						Operation:       resourceType,
-					})
 				}
 
 				var resources []ResourceInfo
@@ -1243,22 +1268,22 @@ func discoverAllResourcesWithProgress(ctx context.Context, clients *OCIClients, 
 					return err
 				}
 
-				retryErr := withRetryAndProgress(ctx, operation, 3, fmt.Sprintf("%s in %s", resourceType, compName), progressTracker)
+				retryErr := withRetryAndProgress(ctx, operation, 3, fmt.Sprintf("%s in %s", resourceType, compName), nil)
 
 				if retryErr != nil {
 					if isRetriableError(retryErr) {
 						logger.Verbose("Skipping %s in compartment %s due to retriable error: %v", resourceType, compName, retryErr)
-						if progressTracker != nil {
-							progressTracker.Update(ProgressUpdate{IsError: true})
-						}
 					} else {
 						errorMsg := fmt.Sprintf("Error discovering %s in compartment %s: %v", resourceType, compName, retryErr)
 						logger.Verbose(errorMsg)
 						mu.Lock()
 						discoveryErrors = append(discoveryErrors, errorMsg)
 						mu.Unlock()
-						if progressTracker != nil {
-							progressTracker.Update(ProgressUpdate{IsError: true})
+					}
+					// Update progress even for failed resource types
+					if enableProgress && compartmentBars != nil {
+						if bar, exists := compartmentBars[comp]; exists {
+							bar.Incr()
 						}
 					}
 					continue
@@ -1279,24 +1304,30 @@ func discoverAllResourcesWithProgress(ctx context.Context, clients *OCIClients, 
 					mu.Lock()
 					allResources = append(allResources, filteredResources...)
 					mu.Unlock()
-
-					if progressTracker != nil {
-						progressTracker.Update(ProgressUpdate{ResourceCount: int64(len(filteredResources))})
+					
+					// Update resource count for this compartment
+					if enableProgress {
+						if currentCount, ok := resourceCounts.Load(comp); ok {
+							newCount := currentCount.(int) + len(filteredResources)
+							resourceCounts.Store(comp, newCount)
+						}
 					}
 				}
 
 				if len(resources) > len(filteredResources) {
 					logger.Verbose("Filtered %d resources by name in %s %s", len(resources)-len(filteredResources), resourceType, compName)
 				}
+				
+				// Update progress bar for this resource type completion
+				if enableProgress && compartmentBars != nil {
+					if bar, exists := compartmentBars[comp]; exists {
+						bar.Incr()
+					}
+				}
 			}
 
-			// Mark compartment as complete
-			if progressTracker != nil {
-				progressTracker.Update(ProgressUpdate{
-					CompartmentName:       compName,
-					IsCompartmentComplete: true,
-				})
-			}
+			// Compartment processing complete - no additional action needed
+			// Progress is automatically complete when all resource types are processed
 
 			logger.Verbose("Completed processing compartment: %s", compName)
 		}(*compartment.Id, *compartment.Name)
