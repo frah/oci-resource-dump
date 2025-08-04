@@ -119,14 +119,83 @@ func withRetry(ctx context.Context, operation func() error, maxRetries int, oper
 	return withRetryAndProgress(ctx, operation, maxRetries, operationName, nil)
 }
 
-// discoverComputeInstances discovers all compute instances in a compartment
+// getAllVnicAttachments retrieves all VNIC attachments in a compartment efficiently
+func getAllVnicAttachments(ctx context.Context, clients *OCIClients, compartmentID string) ([]core.VnicAttachment, error) {
+	var allVnicAttachments []core.VnicAttachment
+
+	logger.Debug("Bulk fetching all VNIC attachments for compartment: %s", compartmentID)
+
+	// Implement pagination to get all VNIC attachments
+	var page *string
+	pageCount := 0
+	for {
+		pageCount++
+		logger.Debug("Fetching VNIC attachments page %d for compartment: %s", pageCount, compartmentID)
+		req := core.ListVnicAttachmentsRequest{
+			CompartmentId: common.String(compartmentID),
+			Page:          page,
+		}
+
+		resp, err := clients.ComputeClient.ListVnicAttachments(ctx, req)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list VNIC attachments: %w", err)
+		}
+
+		allVnicAttachments = append(allVnicAttachments, resp.Items...)
+
+		if resp.OpcNextPage == nil {
+			break
+		}
+		page = resp.OpcNextPage
+	}
+
+	logger.Debug("Found %d total VNIC attachments in compartment %s", len(allVnicAttachments), compartmentID)
+	return allVnicAttachments, nil
+}
+
+// getSpecificVnics retrieves only the VNICs referenced by the given VNIC attachments
+func getSpecificVnics(ctx context.Context, clients *OCIClients, vnicAttachments []core.VnicAttachment) (map[string]*core.Vnic, error) {
+	vnicMap := make(map[string]*core.Vnic)
+	vnicIDs := make(map[string]bool) // Track unique VNIC IDs to avoid duplicates
+
+	// Extract unique VNIC IDs from attachments
+	for _, attachment := range vnicAttachments {
+		if attachment.VnicId != nil && attachment.LifecycleState == core.VnicAttachmentLifecycleStateAttached {
+			vnicIDs[*attachment.VnicId] = true
+		}
+	}
+
+	logger.Debug("Fetching %d specific VNICs", len(vnicIDs))
+
+	// Fetch each VNIC individually - still more efficient than the original approach
+	// because we're not making instance-by-instance calls
+	for vnicID := range vnicIDs {
+		req := core.GetVnicRequest{
+			VnicId: common.String(vnicID),
+		}
+
+		resp, err := clients.VirtualNetworkClient.GetVnic(ctx, req)
+		if err != nil {
+			logger.Verbose("Error getting VNIC %s: %v", vnicID, err)
+			continue // Continue with other VNICs
+		}
+
+		vnicCopy := resp.Vnic // Create a copy
+		vnicMap[vnicID] = &vnicCopy
+	}
+
+	logger.Debug("Successfully fetched %d VNICs", len(vnicMap))
+	return vnicMap, nil
+}
+
+// discoverComputeInstances discovers all compute instances in a compartment using efficient bulk API calls
 func discoverComputeInstances(ctx context.Context, clients *OCIClients, compartmentID string) ([]ResourceInfo, error) {
 	var resources []ResourceInfo
+
+	logger.Debug("Starting efficient compute instances discovery for compartment: %s", compartmentID)
+
+	// Step 1: Get all instances (1 API call with pagination)
 	var allInstances []core.Instance
-
-	logger.Debug("Starting compute instances discovery for compartment: %s", compartmentID)
-
-	// Implement pagination to get all instances
 	var page *string
 	pageCount := 0
 	for {
@@ -138,9 +207,8 @@ func discoverComputeInstances(ctx context.Context, clients *OCIClients, compartm
 		}
 
 		resp, err := clients.ComputeClient.ListInstances(ctx, req)
-
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to list instances: %w", err)
 		}
 
 		allInstances = append(allInstances, resp.Items...)
@@ -151,6 +219,32 @@ func discoverComputeInstances(ctx context.Context, clients *OCIClients, compartm
 		page = resp.OpcNextPage
 	}
 
+	logger.Debug("Found %d total instances in compartment %s", len(allInstances), compartmentID)
+
+	// Step 2: Get all VNIC attachments for the compartment (1 API call with pagination)
+	allVnicAttachments, err := getAllVnicAttachments(ctx, clients, compartmentID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get VNIC attachments: %w", err)
+	}
+
+	// Step 3: Get all required VNICs (N API calls where N = unique VNIC count)
+	vnicMap, err := getSpecificVnics(ctx, clients, allVnicAttachments)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get VNICs: %w", err)
+	}
+
+	// Step 4: Create index maps for efficient in-memory matching
+	instanceAttachments := make(map[string][]core.VnicAttachment)
+	for _, attachment := range allVnicAttachments {
+		if attachment.InstanceId != nil && attachment.LifecycleState == core.VnicAttachmentLifecycleStateAttached {
+			instanceID := *attachment.InstanceId
+			instanceAttachments[instanceID] = append(instanceAttachments[instanceID], attachment)
+		}
+	}
+
+	logger.Debug("Built index for %d instances with VNIC attachments", len(instanceAttachments))
+
+	// Step 5: Process instances with efficient in-memory matching
 	for _, instance := range allInstances {
 		if instance.LifecycleState != core.InstanceLifecycleStateTerminated {
 			name := ""
@@ -164,24 +258,16 @@ func discoverComputeInstances(ctx context.Context, clients *OCIClients, compartm
 
 			additionalInfo := make(map[string]interface{})
 
-			// Get primary IP address
+			// Find primary IP using in-memory matching (no additional API calls)
 			if instance.Id != nil {
-				vnicReq := core.ListVnicAttachmentsRequest{
-					CompartmentId: common.String(compartmentID),
-					InstanceId:    instance.Id,
-				}
-
-				vnicResp, err := clients.ComputeClient.ListVnicAttachments(ctx, vnicReq)
-				if err == nil && len(vnicResp.Items) > 0 {
-					for _, vnicAttachment := range vnicResp.Items {
-						if vnicAttachment.VnicId != nil && vnicAttachment.LifecycleState == core.VnicAttachmentLifecycleStateAttached {
-							vnicDetailsReq := core.GetVnicRequest{
-								VnicId: vnicAttachment.VnicId,
-							}
-							vnicDetailsResp, err := clients.VirtualNetworkClient.GetVnic(ctx, vnicDetailsReq)
-							if err == nil && vnicDetailsResp.Vnic.IsPrimary != nil && *vnicDetailsResp.Vnic.IsPrimary {
-								if vnicDetailsResp.Vnic.PrivateIp != nil {
-									additionalInfo["primary_ip"] = *vnicDetailsResp.Vnic.PrivateIp
+				attachments, exists := instanceAttachments[*instance.Id]
+				if exists {
+					for _, attachment := range attachments {
+						if attachment.VnicId != nil {
+							vnic, vnicExists := vnicMap[*attachment.VnicId]
+							if vnicExists && vnic.IsPrimary != nil && *vnic.IsPrimary {
+								if vnic.PrivateIp != nil {
+									additionalInfo["primary_ip"] = *vnic.PrivateIp
 								}
 								break
 							}
@@ -199,7 +285,11 @@ func discoverComputeInstances(ctx context.Context, clients *OCIClients, compartm
 		}
 	}
 
-	logger.Verbose("Found %d compute instances in compartment %s", len(resources), compartmentID)
+	logger.Verbose("Found %d compute instances in compartment %s using efficient discovery", len(resources), compartmentID)
+	logger.Debug("API efficiency: Reduced from ~%d calls to %d calls", 
+		1+len(allInstances)+len(allVnicAttachments), 
+		1+1+len(vnicMap))
+	
 	return resources, nil
 }
 
