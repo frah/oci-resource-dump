@@ -184,9 +184,13 @@ func discoverComputeInstances(ctx context.Context, clients *OCIClients, compartm
 									additionalInfo["primary_ip"] = *vnicDetailsResp.Vnic.PrivateIp
 								}
 								break
+							} else if err != nil {
+								logger.Verbose("Error getting VNIC details for instance %s: %v", *instance.Id, err)
 							}
 						}
 					}
+				} else if err != nil {
+					logger.Verbose("Error listing VNIC attachments for instance %s: %v", *instance.Id, err)
 				}
 			}
 
@@ -796,6 +800,9 @@ func discoverFunctions(ctx context.Context, clients *OCIClients, compartmentID s
 
 				if err != nil {
 					logger.Verbose("Error listing functions for application %s: %v", *app.DisplayName, err)
+					if !isRetriableError(err) {
+						logger.Info("Failed to discover functions in application %s (compartment %s): %v", *app.DisplayName, compartmentID, err)
+					}
 					break
 				}
 
@@ -958,6 +965,9 @@ func discoverFileStorageSystems(ctx context.Context, clients *OCIClients, compar
 
 			if err != nil {
 				logger.Verbose("Error listing file systems in AD %s: %v", adName, err)
+				if !isRetriableError(err) {
+					logger.Info("Failed to discover file systems in availability domain %s (compartment %s): %v", adName, compartmentID, err)
+				}
 				break // Continue with next AD instead of failing completely
 			}
 
@@ -1128,6 +1138,8 @@ func discoverStreams(ctx context.Context, clients *OCIClients, compartmentID str
 					if getResp.Stream.RetentionInHours != nil {
 						additionalInfo["retention_in_hours"] = *getResp.Stream.RetentionInHours
 					}
+				} else {
+					logger.Verbose("Error getting stream details for stream %s: %v", *stream.Id, err)
 				}
 			}
 
@@ -1864,6 +1876,9 @@ func discoverDatabasesInVmClusters(ctx context.Context, clients *OCIClients, com
 	vmClusters, err := discoverVmClusters(ctx, clients, compartmentID)
 	if err != nil {
 		logger.Verbose("Error discovering VM Clusters for database search: %v", err)
+		if !isRetriableError(err) {
+			logger.Info("Failed to discover VM Clusters for database search (compartment %s): %v", compartmentID, err)
+		}
 		return resources, nil // Return empty but don't fail
 	}
 
@@ -1888,6 +1903,9 @@ func discoverDatabasesInVmClusters(ctx context.Context, clients *OCIClients, com
 
 			if err != nil {
 				logger.Verbose("Error listing databases in VM Cluster %s: %v", vmClusterID, err)
+				if !isRetriableError(err) {
+					logger.Info("Failed to discover databases in VM Cluster %s (compartment %s): %v", vmClusterID, compartmentID, err)
+				}
 				break // Continue with next VM Cluster
 			}
 
@@ -2064,6 +2082,9 @@ func discoverDbNodes(ctx context.Context, clients *OCIClients, compartmentID str
 
 				if err != nil {
 					logger.Verbose("Error listing database nodes for DB System %s: %v", *dbSystem.Id, err)
+					if !isRetriableError(err) {
+						logger.Info("Failed to discover database nodes for DB System %s (compartment %s): %v", *dbSystem.Id, compartmentID, err)
+					}
 					break // Continue with next DB System
 				}
 
