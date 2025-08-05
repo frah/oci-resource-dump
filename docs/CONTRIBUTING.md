@@ -88,7 +88,7 @@ details, err := clients.ServiceClient.GetResourceDetails(ctx, detailReq)
 if err != nil {
     logger.Verbose("Error getting resource details for %s: %v", resourceID, err)
     if !isRetriableError(err) {
-        logger.Normal("Failed to get details for resource %s (compartment %s): %v", resourceID, compartmentID, err)
+        logger.Error("Failed to get details for resource %s (compartment %s): %v", resourceID, compartmentID, err)
     }
     // Continue processing without details
 } else {
@@ -105,7 +105,7 @@ nestedResp, err := clients.ServiceClient.ListNestedResources(ctx, nestedReq)
 if err != nil {
     logger.Verbose("Error listing nested resources for parent %s: %v", parentID, err)
     if !isRetriableError(err) {
-        logger.Normal("Failed to discover nested resources for parent %s (compartment %s): %v", parentID, compartmentID, err)
+        logger.Error("Failed to discover nested resources for parent %s (compartment %s): %v", parentID, compartmentID, err)
     }
     break // Continue with next parent
 }
@@ -117,8 +117,8 @@ if err != nil {
 
 - **`logger.Debug()`**: 詳細なデバッグ情報（ページネーション、API呼び出し詳細）
 - **`logger.Verbose()`**: 技術的詳細情報（エラー詳細、処理統計）
-- **`logger.Normal()`**: 重要な情報とエラー（権限不足、重大な失敗）
-- **`logger.Info()`**: ユーザー向け重要情報（要約統計）
+- **`logger.Info()`**: 重要な情報（処理進捗、成功統計、ユーザー向け重要情報）
+- **`logger.Error()`**: エラー情報（権限不足、重大な失敗）
 
 #### 3.2 ログメッセージ形式
 
@@ -131,7 +131,7 @@ logger.Debug("Found %d total resources in compartment %s", len(allResources), co
 **エラーログ:**
 ```go
 logger.Verbose("Error getting resource details for %s: %v", resourceID, err)
-logger.Normal("Failed to discover resources (compartment %s): %v", compartmentID, err)
+logger.Error("Failed to discover resources (compartment %s): %v", compartmentID, err)
 ```
 
 **完了ログ:**
@@ -224,7 +224,7 @@ details, err := client.GetDetails(ctx, req)
 if err != nil {
     logger.Verbose("Error getting details for %s: %v", resourceID, err)
     if !isRetriableError(err) {
-        logger.Normal("Failed to get details for %s: %v", resourceID, err)
+        logger.Error("Failed to get details for %s: %v", resourceID, err)
     }
 } else {
     additionalInfo["details"] = details
